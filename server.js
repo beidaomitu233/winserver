@@ -10,6 +10,8 @@ const ROOT = __dirname;
 const DATA_DIR = process.env.XPCN_DATA_DIR ? path.resolve(process.env.XPCN_DATA_DIR) : path.join(ROOT, "data");
 const CONFIG_PATH = path.join(DATA_DIR, "config.json");
 const RUNTIME_DIR = path.join(ROOT, "runtime");
+const STARTUP_DIR = process.env.XPCN_STARTUP_DIR || (process.env.APPDATA ? path.join(process.env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", "Startup") : "");
+const STARTUP_COMMAND = STARTUP_DIR ? path.join(STARTUP_DIR, "XPCN Local Manager.cmd") : "";
 const PORT_OVERRIDE = process.env.XPCN_PORT !== undefined && process.env.XPCN_PORT !== "";
 const REQUESTED_PORT = Number(process.env.XPCN_PORT || 18113);
 const DEFAULT_PORT = Number.isFinite(REQUESTED_PORT) && REQUESTED_PORT > 0 ? REQUESTED_PORT : 18113;
@@ -102,6 +104,11 @@ function defaultConfig() {
       dataDir: minioData,
       apiPort: 9000,
       consolePort: 9001
+    },
+    systemSettings: {
+      autostart: false,
+      startSuiteOnLaunch: false,
+      phpMyAdminUrl: "http://127.0.0.1/phpmyadmin"
     },
     services: [
       {
@@ -345,6 +352,7 @@ function mergeConfig(base, saved) {
     ...saved,
     paths: { ...base.paths, ...(saved.paths || {}) },
     minio: { ...base.minio, ...(saved.minio || {}) },
+    systemSettings: { ...base.systemSettings, ...(saved.systemSettings || {}) },
     services: Array.isArray(saved.services) ? saved.services : base.services,
     sites: Array.isArray(saved.sites) ? saved.sites : base.sites,
     databases: Array.isArray(saved.databases) ? saved.databases : base.databases,
@@ -374,7 +382,21 @@ function saveConfig() {
 }
 
 function addLog(message) {
-  const stamp = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const date = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  const stamp = [
+    date.getFullYear(),
+    "-",
+    pad(date.getMonth() + 1),
+    "-",
+    pad(date.getDate()),
+    " ",
+    pad(date.getHours()),
+    ":",
+    pad(date.getMinutes()),
+    ":",
+    pad(date.getSeconds())
+  ].join("");
   config.logs.unshift(`${stamp} ${message}`);
   config.logs = config.logs.slice(0, 300);
   saveConfig();
@@ -672,6 +694,58 @@ function createFtpAccount(data) {
   return account;
 }
 
+function setAutostart(enabled) {
+  if (!STARTUP_COMMAND) throw new Error("未找到 Windows Startup 目录，无法设置开机自启");
+  ensureDir(STARTUP_DIR);
+  if (enabled) {
+    const lines = [
+      "@echo off",
+      `cd /d "${ROOT}"`,
+      `set "XPCN_PORT=${config.port || DEFAULT_PORT}"`,
+      `set "XPCN_DATA_DIR=${DATA_DIR}"`,
+      `start "" /min "${process.execPath}" "${path.join(ROOT, "server.js")}"`
+    ];
+    fs.writeFileSync(STARTUP_COMMAND, `${lines.join("\r\n")}\r\n`, "utf8");
+    return;
+  }
+  if (exists(STARTUP_COMMAND)) fs.unlinkSync(STARTUP_COMMAND);
+}
+
+function publicSystemSettings() {
+  return {
+    ...config.systemSettings,
+    port: config.port || DEFAULT_PORT,
+    dataDir: DATA_DIR,
+    configPath: CONFIG_PATH,
+    autostartPath: STARTUP_COMMAND,
+    autostartInstalled: STARTUP_COMMAND ? exists(STARTUP_COMMAND) : false,
+    paths: config.paths
+  };
+}
+
+function updateSystemSettings(data) {
+  if (!data || typeof data !== "object") throw new Error("系统设置格式不正确");
+  const next = { ...config.systemSettings };
+
+  if (Object.prototype.hasOwnProperty.call(data, "autostart")) {
+    next.autostart = !!data.autostart;
+    setAutostart(next.autostart);
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "startSuiteOnLaunch")) {
+    next.startSuiteOnLaunch = !!data.startSuiteOnLaunch;
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "phpMyAdminUrl")) {
+    const url = String(data.phpMyAdminUrl || "").trim();
+    if (!/^https?:\/\//i.test(url)) throw new Error("phpMyAdmin 地址必须以 http:// 或 https:// 开头");
+    next.phpMyAdminUrl = url;
+  }
+
+  config.systemSettings = next;
+  saveConfig();
+  addLog("系统设置已保存");
+  return publicSystemSettings();
+}
+
 function removeRecord(kind, indexValue) {
   const collections = {
     sites: {
@@ -875,6 +949,7 @@ async function state() {
     ftpAccounts: config.ftpAccounts,
     software: config.software.map(publicSoftware),
     configFiles: config.configFiles.map((item) => ({ id: item.id, label: item.label, path: item.path, exists: exists(item.path) })),
+    systemSettings: publicSystemSettings(),
     logs: config.logs,
     version: "8.1.1.3-local",
     configPath: CONFIG_PATH
@@ -911,7 +986,7 @@ function serveStatic(req, res) {
     ".png": "image/png",
     ".svg": "image/svg+xml"
   };
-  res.writeHead(200, { "Content-Type": types[ext] || "application/octet-stream" });
+  res.writeHead(200, { "Content-Type": types[ext] || "application/octet-stream", "Cache-Control": "no-store" });
   fs.createReadStream(filePath).pipe(res);
 }
 
@@ -934,6 +1009,17 @@ async function handleApi(req, res) {
       config.logs = [];
       saveConfig();
       send(res, 200, { ok: true, state: await state() });
+      return;
+    }
+
+    if (req.method === "GET" && requestUrl.pathname === "/api/settings/system") {
+      send(res, 200, publicSystemSettings());
+      return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname === "/api/settings/system") {
+      const body = await readJsonBody(req);
+      send(res, 200, { ok: true, message: "系统设置已保存", systemSettings: updateSystemSettings(body) });
       return;
     }
 
@@ -1048,4 +1134,9 @@ server.on("error", (error) => {
 server.listen(config.port || DEFAULT_PORT, "127.0.0.1", () => {
   console.log(`XP.CN local manager: http://127.0.0.1:${config.port || DEFAULT_PORT}`);
   console.log(`Config: ${CONFIG_PATH}`);
+  if (config.systemSettings.startSuiteOnLaunch) {
+    runSuite("start")
+      .then((result) => console.log(result.message))
+      .catch((error) => console.error(`Auto start failed: ${error.message}`));
+  }
 });

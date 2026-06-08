@@ -93,10 +93,11 @@ function stop(child) {
 async function main() {
   const port = await getFreePort();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "xpcn-smoke-"));
+  const startupDir = fs.mkdtempSync(path.join(os.tmpdir(), "xpcn-startup-"));
   const logs = [];
   const child = spawn(process.execPath, ["server.js"], {
     cwd: ROOT,
-    env: { ...process.env, XPCN_PORT: String(port), XPCN_DATA_DIR: dataDir },
+    env: { ...process.env, XPCN_PORT: String(port), XPCN_DATA_DIR: dataDir, XPCN_STARTUP_DIR: startupDir },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
   });
@@ -111,6 +112,7 @@ async function main() {
     assert(Array.isArray(state.software), "state.software should be an array");
     assert(Array.isArray(state.configFiles), "state.configFiles should be an array");
     assert(state.configFiles.some((item) => item.id === "php.ini"), "php.ini config entry should exist");
+    assert(state.systemSettings && state.systemSettings.port === port, "system settings should expose the running port");
 
     const homepage = await request(port, "/");
     assert(homepage.statusCode === 200, "homepage should return HTTP 200");
@@ -147,10 +149,35 @@ async function main() {
     assert(deleteRoot.statusCode === 500, "root database record should be protected");
     assert(deleteRoot.body.includes("root"), "root protection response should mention root");
 
+    const settingsOn = await request(port, "/api/settings/system", {
+      method: "POST",
+      body: {
+        autostart: true,
+        startSuiteOnLaunch: true,
+        phpMyAdminUrl: "http://127.0.0.1:18113/phpmyadmin"
+      }
+    });
+    assert(settingsOn.statusCode === 200, "saving system settings should return HTTP 200");
+    const enabledSettings = JSON.parse(settingsOn.body).systemSettings;
+    assert(enabledSettings.autostart === true, "autostart should be enabled");
+    assert(enabledSettings.startSuiteOnLaunch === true, "startSuiteOnLaunch should be enabled");
+    assert(enabledSettings.phpMyAdminUrl.endsWith("/phpmyadmin"), "phpMyAdmin URL should be saved");
+    assert(fs.existsSync(enabledSettings.autostartPath), "autostart command should be created");
+
+    const settingsOff = await request(port, "/api/settings/system", {
+      method: "POST",
+      body: { autostart: false }
+    });
+    assert(settingsOff.statusCode === 200, "disabling autostart should return HTTP 200");
+    const disabledSettings = JSON.parse(settingsOff.body).systemSettings;
+    assert(disabledSettings.autostart === false, "autostart should be disabled");
+    assert(!fs.existsSync(enabledSettings.autostartPath), "autostart command should be removed");
+
     console.log(`Smoke test passed on http://127.0.0.1:${port}`);
   } finally {
     await stop(child);
     fs.rmSync(dataDir, { recursive: true, force: true });
+    fs.rmSync(startupDir, { recursive: true, force: true });
   }
 }
 

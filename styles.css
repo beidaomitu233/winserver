@@ -838,6 +838,82 @@ tbody td.path {
   line-height: 1.7;
 }
 
+.settings-form {
+  display: grid;
+  gap: 16px;
+  max-width: 760px;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  color: #4e5b68;
+}
+
+.toggle-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--blue);
+}
+
+.settings-field {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-field span,
+.settings-readonly span,
+.path-row span {
+  color: #667587;
+}
+
+.settings-field input {
+  height: 36px;
+  border: 1px solid #dce4ec;
+  padding: 0 10px;
+  outline: none;
+}
+
+.settings-readonly {
+  display: grid;
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: 16px;
+  border-top: 1px solid #edf0f3;
+}
+
+.settings-readonly div,
+.path-row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+}
+
+.settings-readonly div {
+  grid-template-columns: 132px minmax(0, 1fr);
+}
+
+.settings-readonly strong,
+.path-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #334154;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-list {
+  display: grid;
+  gap: 8px;
+}
+
 .statusbar {
   display: flex;
   align-items: center;

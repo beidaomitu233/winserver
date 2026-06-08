@@ -30,6 +30,7 @@ http://127.0.0.1:18113
 
 - `XPCN_PORT`：覆盖管理台端口。
 - `XPCN_DATA_DIR`：覆盖运行数据目录，便于测试或多实例隔离。
+- `XPCN_STARTUP_DIR`：覆盖开机自启脚本目录，主要用于测试。
 
 ## 检查
 
@@ -76,7 +77,7 @@ codex/simple-web-manager
 - 数据库：通过本机 `mysql.exe` 创建数据库/账号，支持修改 root 密码和移除管理台记录。
 - FTP：创建本地 FTP 账号记录和目录，支持移除管理台记录。
 - 软件管理：识别本机组件安装状态，支持配置了下载地址的组件安装。
-- 设置：读取和保存 `php.ini`、`httpd.conf`、`nginx.conf`、`my.ini`、`redis.conf`、`hosts` 等配置文件。
+- 设置：读取和保存 `php.ini`、`httpd.conf`、`nginx.conf`、`my.ini`、`redis.conf`、`hosts` 等配置文件，支持系统设置、开机自启脚本和本机路径查看。
 
 ## 本机数据
 

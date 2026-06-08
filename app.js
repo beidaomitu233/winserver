@@ -62,9 +62,21 @@ let activeSoftwareTab = "全部";
 let activeCategory = "全部";
 let activeConfig = "php.ini";
 let activeView = "home";
+let activeSettings = "config";
 let modalType = "";
 let backendOnline = false;
 const configContents = {};
+const systemSettings = {
+  autostart: false,
+  startSuiteOnLaunch: false,
+  phpMyAdminUrl: "http://127.0.0.1/phpmyadmin",
+  port: "",
+  dataDir: "",
+  configPath: "",
+  autostartPath: "",
+  autostartInstalled: false,
+  paths: {}
+};
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -103,6 +115,7 @@ function applyState(state) {
   replaceArray(configFiles, state.configFiles || configFiles);
   replaceArray(configs, configFiles.map((item) => item.id));
   replaceArray(logLines, Array.isArray(state.logs) ? state.logs : logLines);
+  Object.assign(systemSettings, state.systemSettings || {});
   if (!configs.includes(activeConfig)) activeConfig = configs[0] || "php.ini";
   const version = $(".version");
   if (version && state.version) version.innerHTML = `<span>ⓘ</span> 版本：${escapeHtml(state.version)}`;
@@ -124,7 +137,12 @@ async function refreshState() {
 async function postApi(path, body = {}) {
   const result = await api(path, { method: "POST", body: JSON.stringify(body) });
   if (result.state) applyState(result.state);
-  else if (result.message) addLog(result.message);
+  else if (result.systemSettings) {
+    Object.assign(systemSettings, result.systemSettings);
+    renderQuickStatus();
+    if (activeView === "settings") renderSettings();
+    if (result.message) addLog(result.message);
+  } else if (result.message) addLog(result.message);
   return result;
 }
 
@@ -172,12 +190,19 @@ function renderAll() {
 function renderQuickStatus() {
   const suiteButton = $('[data-action="suite-toggle"]');
   const suiteDot = suiteButton?.parentElement.querySelector(".status-dot");
+  const autostartButton = $('[data-action="autostart-toggle"]');
+  const autostartDot = autostartButton?.parentElement.querySelector(".status-dot");
   const autoServices = services.filter((item) => item.auto);
   const anyRunning = autoServices.some((item) => item.running);
   if (suiteButton) suiteButton.textContent = anyRunning ? "停止" : "启动";
   if (suiteDot) {
     suiteDot.classList.toggle("running", anyRunning);
     suiteDot.classList.toggle("stopped", !anyRunning);
+  }
+  if (autostartButton) autostartButton.textContent = systemSettings.autostart ? "停用" : "启用";
+  if (autostartDot) {
+    autostartDot.classList.toggle("running", !!systemSettings.autostart);
+    autostartDot.classList.toggle("stopped", !systemSettings.autostart);
   }
 }
 
@@ -319,6 +344,18 @@ function renderSoftware() {
 }
 
 function renderSettings() {
+  $$(".settings-tab").forEach((item) => item.classList.toggle("is-active", item.dataset.settings === activeSettings));
+  const showConfigTabs = activeSettings === "config";
+  $("#configTabs").hidden = !showConfigTabs;
+  if (activeSettings === "system") {
+    renderSystemSettings();
+    return;
+  }
+  if (activeSettings === "files") {
+    renderFileLocations();
+    return;
+  }
+
   $("#configTabs").innerHTML = configs
     .map((item) => {
       const meta = configFiles.find((file) => file.id === item);
@@ -344,6 +381,72 @@ function renderSettings() {
   `;
 }
 
+function renderSystemSettings() {
+  $("#settingsContent").innerHTML = `
+    <div class="config-head">
+      <div>
+        <p class="config-version">• 系统设置</p>
+        <p class="config-path">保存到 ${escapeHtml(systemSettings.configPath || "data/config.json")}</p>
+      </div>
+      <div class="config-actions">
+        <button class="primary" type="button" data-action="save-system-settings">保存</button>
+      </div>
+    </div>
+    <div class="settings-form">
+      <label class="toggle-row">
+        <input type="checkbox" id="settingAutostart" ${systemSettings.autostart ? "checked" : ""} />
+        <span>开机自启偏好</span>
+      </label>
+      <label class="toggle-row">
+        <input type="checkbox" id="settingStartSuite" ${systemSettings.startSuiteOnLaunch ? "checked" : ""} />
+        <span>管理台启动后自动启动套件</span>
+      </label>
+      <label class="settings-field" for="settingPhpMyAdmin">
+        <span>phpMyAdmin 地址</span>
+        <input id="settingPhpMyAdmin" type="url" value="${escapeHtml(systemSettings.phpMyAdminUrl || "")}" placeholder="http://127.0.0.1/phpmyadmin" />
+      </label>
+      <div class="settings-readonly">
+        <div><span>管理台端口</span><strong>${escapeHtml(systemSettings.port || "")}</strong></div>
+        <div><span>数据目录</span><strong>${escapeHtml(systemSettings.dataDir || "")}</strong></div>
+        <div><span>开机自启脚本</span><strong>${escapeHtml(systemSettings.autostartPath || "未找到 Startup 目录")}</strong></div>
+      </div>
+    </div>
+  `;
+}
+
+function renderFileLocations() {
+  const paths = systemSettings.paths || {};
+  const entries = [
+    ["phpStudy 根目录", paths.phpStudyRoot],
+    ["网站根目录", paths.wwwRoot],
+    ["Apache", paths.apacheRoot],
+    ["Nginx", paths.nginxRoot],
+    ["MySQL 5.7", paths.mysql57Root],
+    ["MySQL 8.0", paths.mysql80Root],
+    ["PHP", paths.phpRoot],
+    ["FTP", paths.ftpRoot],
+    ["Redis", paths.redisRoot],
+    ["MinIO", paths.minioRoot]
+  ];
+  $("#settingsContent").innerHTML = `
+    <div class="config-head">
+      <div>
+        <p class="config-version">• 文件位置</p>
+        <p class="config-path">这些路径来自当前运行配置，可在 data/config.json 中调整。</p>
+      </div>
+    </div>
+    <div class="path-list">
+      ${entries.map(([label, value]) => `
+        <div class="path-row">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value || "")}</strong>
+          <button class="manage-button" type="button" data-open-folder="${escapeHtml(value || "")}" ${value ? "" : "disabled"}>目录</button>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
 async function loadConfigFile(id = activeConfig) {
   if (!canUseBackend) return;
   try {
@@ -361,7 +464,7 @@ function setView(view) {
   activeView = view;
   $$(".nav-item").forEach((item) => item.classList.toggle("is-active", item.dataset.view === view));
   $$(".view").forEach((item) => item.classList.toggle("is-visible", item.id === `view-${view}`));
-  if (view === "settings") loadConfigFile(activeConfig);
+  if (view === "settings" && activeSettings === "config") loadConfigFile(activeConfig);
 }
 
 function field(label, name, value = "", type = "text") {
@@ -580,15 +683,21 @@ function bindEvents() {
       }
     }
     if (quickAction?.dataset.action === "autostart-toggle") {
-      quickAction.textContent = quickAction.textContent === "启用" ? "停用" : "启用";
-      const dot = quickAction.parentElement.querySelector(".status-dot");
-      dot.classList.toggle("running");
-      dot.classList.toggle("stopped");
-      addLog(`开机自启已${quickAction.textContent === "停用" ? "启用" : "关闭"}`);
+      const next = !systemSettings.autostart;
+      if (canUseBackend) {
+        await runBackend(() => postApi("/api/settings/system", { autostart: next }));
+      } else {
+        systemSettings.autostart = next;
+        addLog(`开机自启偏好已${next ? "启用" : "关闭"}`);
+        renderQuickStatus();
+        if (activeView === "settings") renderSettings();
+      }
     }
     if (quickAction?.dataset.action === "open-db-tool") {
+      const url = systemSettings.phpMyAdminUrl || "http://127.0.0.1/phpmyadmin";
       addLog("数据库工具已打开");
-      window.open("http://127.0.0.1/phpmyadmin", "_blank");
+      if (canUseBackend) await runBackend(() => postApi("/api/open/url", { url }));
+      else window.open(url, "_blank");
     }
     if (quickAction?.dataset.action === "show-all") {
       activeSoftwareTab = "全部";
@@ -643,6 +752,13 @@ function bindEvents() {
       await loadConfigFile(activeConfig);
     }
 
+    const settingsTab = event.target.closest("[data-settings]");
+    if (settingsTab) {
+      activeSettings = settingsTab.dataset.settings;
+      renderSettings();
+      if (activeSettings === "config") await loadConfigFile(activeConfig);
+    }
+
     if (quickAction?.dataset.action === "reload-config") {
       await loadConfigFile(activeConfig);
     }
@@ -651,6 +767,19 @@ function bindEvents() {
       const content = editor ? editor.value : "";
       configContents[activeConfig] = content;
       await runBackend(() => postApi(`/api/config-files/${encodeURIComponent(activeConfig)}`, { content }));
+    }
+    if (quickAction?.dataset.action === "save-system-settings") {
+      const payload = {
+        autostart: !!$("#settingAutostart")?.checked,
+        startSuiteOnLaunch: !!$("#settingStartSuite")?.checked,
+        phpMyAdminUrl: $("#settingPhpMyAdmin")?.value || "http://127.0.0.1/phpmyadmin"
+      };
+      await runBackend(() => postApi("/api/settings/system", payload), () => {
+        Object.assign(systemSettings, payload);
+        addLog("系统设置已保存");
+        renderQuickStatus();
+        renderSettings();
+      });
     }
 
     if (event.target === $("#modalBackdrop")) closeModal();
