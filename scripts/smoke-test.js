@@ -130,6 +130,11 @@ async function main() {
     assert(homepage.body.includes("XP.CN 小皮"), "homepage should contain the product name");
     assert(homepage.body.includes("app.js"), "homepage should load app.js");
 
+    const staticTraversal = await request(port, "/..%2Fserver.js");
+    assert(staticTraversal.statusCode === 403, "static file traversal should be forbidden");
+    const staticBadEncoding = await request(port, "/%E0%A4%A");
+    assert(staticBadEncoding.statusCode === 400, "bad static URL encoding should return HTTP 400");
+
     const sitePath = path.join(dataDir, "www", "smoke.local");
     const createSite = await request(port, "/api/sites", {
       method: "POST",

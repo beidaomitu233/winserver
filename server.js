@@ -1217,11 +1217,22 @@ function send(res, statusCode, data, headers = {}) {
   res.end(body);
 }
 
+function isInsideRoot(filePath) {
+  const relative = path.relative(ROOT, filePath);
+  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 function serveStatic(req, res) {
   const requestUrl = new URL(req.url, `http://127.0.0.1:${config.port || DEFAULT_PORT}`);
-  const pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
+  let pathname = "";
+  try {
+    pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
+  } catch {
+    send(res, 400, "Bad request");
+    return;
+  }
   const filePath = path.normalize(path.join(ROOT, pathname));
-  if (!filePath.startsWith(ROOT)) {
+  if (!isInsideRoot(filePath)) {
     send(res, 403, "Forbidden");
     return;
   }
