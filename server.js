@@ -1395,7 +1395,13 @@ async function handleApi(req, res) {
 
     if (req.method === "POST" && parts[1] === "software" && parts.length === 4) {
       const action = parts[3];
-      const message = action === "install" ? await installSoftware(parts[2]) : await uninstallSoftware(parts[2]);
+      let message = "";
+      if (action === "install") message = await installSoftware(parts[2]);
+      else if (action === "uninstall") message = await uninstallSoftware(parts[2]);
+      else {
+        send(res, 404, { error: "软件操作不存在" });
+        return;
+      }
       send(res, 200, { ok: true, message, state: await state() });
       return;
     }

@@ -278,6 +278,13 @@ async function main() {
     assert(redisOff.statusCode === 200, "disabling redis auto should return HTTP 200");
     assert(JSON.parse(redisOff.body).service.auto === false, "redis should be removed from the suite");
 
+    const unknownSoftwareAction = await request(port, "/api/software/nginx/launch", {
+      method: "POST",
+      body: {}
+    });
+    assert(unknownSoftwareAction.statusCode === 404, "unknown software action should fail with HTTP 404");
+    assert(unknownSoftwareAction.body.includes("软件操作不存在"), "unknown software action should explain the invalid action");
+
     const settingsOn = await request(port, "/api/settings/system", {
       method: "POST",
       body: {
