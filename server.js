@@ -819,13 +819,25 @@ function sqlString(value) {
   return `'${String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 }
 
+function findDatabaseConflict(db) {
+  const normalizedDb = String(db || "").trim().toLowerCase();
+  return config.databases.findIndex((item) => String(item.db || "").trim().toLowerCase() === normalizedDb);
+}
+
+function assertUniqueDatabase(db) {
+  if (findDatabaseConflict(db) >= 0) {
+    throw new Error(`数据库 ${db} 已存在`);
+  }
+}
+
 async function createDatabase(data) {
-  const service = mysqlService();
-  if (!service || !exists(service.clientExe)) throw new Error("未找到 mysql.exe，无法创建数据库");
   const db = String(data.db || "").trim();
   const user = String(data.user || db).trim();
   const pass = String(data.pass || "").trim();
   if (!db || !user || !pass) throw new Error("数据库名、用户和密码都不能为空");
+  assertUniqueDatabase(db);
+  const service = mysqlService();
+  if (!service || !exists(service.clientExe)) throw new Error("未找到 mysql.exe，无法创建数据库");
   const sql = [
     `CREATE DATABASE IF NOT EXISTS ${sqlIdent(db)} DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
     `CREATE USER IF NOT EXISTS ${sqlString(user)}@'localhost' IDENTIFIED BY ${sqlString(pass)}`,

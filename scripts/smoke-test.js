@@ -276,6 +276,13 @@ async function main() {
     assert(deleteRoot.statusCode === 500, "root database record should be protected");
     assert(deleteRoot.body.includes("root"), "root protection response should mention root");
 
+    const duplicateDatabase = await request(port, "/api/databases", {
+      method: "POST",
+      body: { db: "ROOT", user: "root_duplicate", pass: "123456" }
+    });
+    assert(duplicateDatabase.statusCode === 500, "creating a duplicate database record should fail");
+    assert(duplicateDatabase.body.includes("已存在"), "duplicate database response should explain the conflict");
+
     const exportRoot = await request(port, "/api/databases/0/export", { method: "POST", body: {} });
     assert(exportRoot.statusCode === 200, "exporting a database record should return HTTP 200");
     const exported = JSON.parse(exportRoot.body);
