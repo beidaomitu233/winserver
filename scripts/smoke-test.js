@@ -141,6 +141,7 @@ async function main() {
     assert(state.services.every((service) => service.running === false), "dry-run state should not detect real local processes");
     assert(state.services.every((service) => service.type === "square"), "stopped services should render as square");
     assert(state.services.some((service) => service.id === "mariadb"), "MariaDB service should be exposed");
+    assert(state.services.some((service) => service.id === "php73"), "PHP-CGI service should be exposed");
     assert(Array.isArray(state.software), "state.software should be an array");
     assert(state.software.some((item) => item.id === "mariadb"), "MariaDB software should be exposed");
     assert(Array.isArray(state.configFiles), "state.configFiles should be an array");
@@ -398,7 +399,9 @@ async function main() {
 
     const suiteStop = await request(port, "/api/suite/stop", { method: "POST", body: {} });
     assert(suiteStop.statusCode === 200, "suite stop should return HTTP 200");
-    assert(JSON.parse(suiteStop.body).results.some((line) => line.includes("Redis7.2.4")), "suite should include redis after enabling auto");
+    const suiteStopResults = JSON.parse(suiteStop.body).results;
+    assert(suiteStopResults.some((line) => line.includes("Redis7.2.4")), "suite should include redis after enabling auto");
+    assert(suiteStopResults.some((line) => line.includes("PHP7.3 CGI")), "suite should include PHP-CGI by default");
 
     const redisOff = await request(port, "/api/services/redis/auto", {
       method: "POST",
@@ -465,12 +468,14 @@ async function main() {
     assert(updatedPaths.redisRoot.replace(/\\/g, "/").endsWith("/custom_redis"), "custom Redis path should be saved");
     const apacheService = updatedPathsState.services.find((item) => item.id === "apache");
     const mariadbService = updatedPathsState.services.find((item) => item.id === "mariadb");
+    const phpService = updatedPathsState.services.find((item) => item.id === "php73");
     const mariadbSoftware = updatedPathsState.software.find((item) => item.id === "mariadb");
     const redisSoftware = updatedPathsState.software.find((item) => item.id === "redis");
     const httpdConfig = updatedPathsState.configFiles.find((item) => item.id === "httpd.conf");
     const mariadbConfig = updatedPathsState.configFiles.find((item) => item.id === "mariadb.ini");
     assert(apacheService.configFile.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/Apache2.4.39/conf/httpd.conf"), "Apache service config path should be refreshed");
     assert(mariadbService.configFile.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/MariaDB10.11/my.ini"), "MariaDB service config path should be refreshed");
+    assert(phpService.configFile.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/php/php7.3.4nts/php.ini"), "PHP service config path should be refreshed");
     assert(mariadbSoftware.executable.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/MariaDB10.11/bin/mysqld.exe"), "MariaDB software executable should be refreshed");
     assert(redisSoftware.executable.replace(/\\/g, "/").endsWith("/custom_redis/redis-server.exe"), "Redis software executable should be refreshed");
     assert(httpdConfig.path.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/Apache2.4.39/conf/httpd.conf"), "config file path should be refreshed");

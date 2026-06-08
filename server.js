@@ -244,6 +244,18 @@ function defaultConfig() {
         auto: false
       },
       {
+        id: "php73",
+        name: "PHP7.3 CGI",
+        type: "square",
+        processName: "php-cgi.exe",
+        port: 9000,
+        cwd: toSlash(p.phpRoot),
+        exe: toSlash(path.join(p.phpRoot, "php-cgi.exe")),
+        args: ["-b", "127.0.0.1:9000", "-c", toSlash(path.join(p.phpRoot, "php.ini"))],
+        configFile: toSlash(path.join(p.phpRoot, "php.ini")),
+        auto: true
+      },
+      {
         id: "minio",
         name: "MinIO",
         type: "square",
@@ -520,6 +532,12 @@ function refreshDerivedPaths() {
     exe: slashJoin(p.redisRoot, "redis-server.exe"),
     args: ["redis.conf"],
     configFile: slashJoin(p.redisRoot, "redis.conf")
+  });
+  updateKnownService("php73", {
+    cwd: toSlash(p.phpRoot),
+    exe: slashJoin(p.phpRoot, "php-cgi.exe"),
+    args: ["-b", "127.0.0.1:9000", "-c", slashJoin(p.phpRoot, "php.ini")],
+    configFile: slashJoin(p.phpRoot, "php.ini")
   });
   updateKnownService("minio", {
     cwd: toSlash(p.minioRoot),

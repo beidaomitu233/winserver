@@ -6,6 +6,7 @@ const services = [
   { name: "MariaDB10.11", type: "square", running: false, auto: false },
   { name: "Nginx1.15.11", type: "square", running: false, auto: true },
   { name: "Redis7.2.4", type: "square", running: false, auto: false },
+  { name: "PHP7.3 CGI", type: "square", running: false, auto: true },
   { name: "MinIO2025.04", type: "square", running: false, auto: false }
 ];
 

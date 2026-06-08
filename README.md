@@ -72,7 +72,7 @@ codex/simple-web-manager
 
 ## 已接入能力
 
-- 首页：读取 Apache、Nginx、MySQL/MariaDB、Redis、MinIO、FTP 等服务运行状态。
+- 首页：读取 Apache、Nginx、PHP-CGI、MySQL/MariaDB、Redis、MinIO、FTP 等服务运行状态。
 - 一键套件：启动或停止自动服务，并可在服务列表里调整每个服务是否加入套件。
 - 网站：创建和编辑本地站点目录，并尽量写入 Apache/Nginx vhost 与 hosts 映射，支持移除管理台记录。
 - 数据库：通过本机 MySQL/MariaDB `mysql.exe` 创建数据库/账号，支持修改 root 密码、导出 SQL 备份、查看最近备份和移除管理台记录。
