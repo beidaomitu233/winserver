@@ -753,6 +753,31 @@ function assertValidPort(port) {
   if (!Number.isInteger(value) || value < 1 || value > 65535) throw new Error("端口必须在 1-65535 之间");
 }
 
+function isValidIpv4(domain) {
+  const parts = domain.split(".");
+  return parts.length === 4 && parts.every((part) => {
+    if (!/^\d{1,3}$/.test(part)) return false;
+    const value = Number(part);
+    return value >= 0 && value <= 255 && part === String(value);
+  });
+}
+
+function isValidDnsName(domain) {
+  if (domain.length > 253) return false;
+  return domain.split(".").every((label) => {
+    if (!/^[a-zA-Z0-9-]{1,63}$/.test(label)) return false;
+    return !label.startsWith("-") && !label.endsWith("-");
+  });
+}
+
+function assertValidDomain(domain) {
+  const value = String(domain || "").trim();
+  if (!value) throw new Error("域名不能为空");
+  if (value !== domain || /[\s\\/:#?%]/.test(value)) throw new Error("域名格式不正确");
+  if (value.toLowerCase() === "localhost" || isValidIpv4(value) || isValidDnsName(value)) return;
+  throw new Error("域名格式不正确");
+}
+
 function createSite(data) {
   const site = {
     domain: String(data.domain || "").trim(),
@@ -761,7 +786,7 @@ function createSite(data) {
     status: "正常",
     expire: data.expire || "2035-12-03"
   };
-  if (!site.domain) throw new Error("域名不能为空");
+  assertValidDomain(site.domain);
   assertValidPort(site.port);
   assertUniqueSite(site);
 
@@ -790,7 +815,7 @@ function updateSite(indexValue, data) {
     expire: data.expire || config.sites[index].expire || "2035-12-03",
     status: data.status || config.sites[index].status || "正常"
   };
-  if (!site.domain) throw new Error("域名不能为空");
+  assertValidDomain(site.domain);
   assertValidPort(site.port);
   assertUniqueSite(site, index);
   ensureDir(site.path);

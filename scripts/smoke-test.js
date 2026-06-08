@@ -164,6 +164,13 @@ async function main() {
     assert(invalidCreatePort.statusCode === 500, "creating a site with an invalid port should fail");
     assert(invalidCreatePort.body.includes("1-65535"), "invalid create port response should explain the valid range");
 
+    const invalidCreateDomain = await request(port, "/api/sites", {
+      method: "POST",
+      body: { domain: "http://bad.local", port: "8091", path: path.join(dataDir, "www", "bad-domain.local") }
+    });
+    assert(invalidCreateDomain.statusCode === 500, "creating a site with an invalid domain should fail");
+    assert(invalidCreateDomain.body.includes("域名格式"), "invalid create domain response should explain the domain format");
+
     const duplicateSite = await request(port, "/api/sites", {
       method: "POST",
       body: { domain: "SMOKE.local", port: "8088", path: path.join(dataDir, "www", "smoke-duplicate.local") }
@@ -195,6 +202,13 @@ async function main() {
     });
     assert(invalidEditPort.statusCode === 500, "editing a site to an invalid port should fail");
     assert(invalidEditPort.body.includes("1-65535"), "invalid edit port response should explain the valid range");
+
+    const invalidEditDomain = await request(port, `/api/sites/${secondSiteIndex}`, {
+      method: "PUT",
+      body: { domain: "bad/domain.local", port: "8090", path: path.join(dataDir, "www", "smoke-invalid-domain.local") }
+    });
+    assert(invalidEditDomain.statusCode === 500, "editing a site to an invalid domain should fail");
+    assert(invalidEditDomain.body.includes("域名格式"), "invalid edit domain response should explain the domain format");
 
     const deleteSecondSite = await request(port, `/api/sites/${secondSiteIndex}`, { method: "DELETE" });
     assert(deleteSecondSite.statusCode === 200, "removing the second site record should return HTTP 200");
