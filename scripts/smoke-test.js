@@ -227,7 +227,7 @@ async function main() {
     const enabledSettings = JSON.parse(settingsOn.body).systemSettings;
     assert(enabledSettings.autostart === true, "autostart should be enabled");
     assert(enabledSettings.startSuiteOnLaunch === true, "startSuiteOnLaunch should be enabled");
-    assert(enabledSettings.phpMyAdminUrl.endsWith("/phpmyadmin"), "phpMyAdmin URL should be saved");
+    assert(enabledSettings.phpMyAdminUrl === "http://127.0.0.1:18113/phpmyadmin", "phpMyAdmin URL should be saved exactly");
     assert(fs.existsSync(enabledSettings.autostartPath), "autostart command should be created");
 
     const settingsOff = await request(port, "/api/settings/system", {

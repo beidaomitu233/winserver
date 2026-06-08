@@ -143,6 +143,7 @@ async function postApi(path, body = {}) {
   else if (result.systemSettings) {
     Object.assign(systemSettings, result.systemSettings);
     renderQuickStatus();
+    renderRows("database");
     if (activeView === "settings") renderSettings();
     if (result.message) addLog(result.message);
   } else if (result.service) {
@@ -273,6 +274,10 @@ function siteUrl(site) {
   return `${protocol}://${site.domain}${port}/`;
 }
 
+function phpMyAdminUrl() {
+  return systemSettings.phpMyAdminUrl || "http://127.0.0.1/phpmyadmin";
+}
+
 function renderRows(kind, query = "") {
   const q = query.trim().toLowerCase();
   const configsByKind = {
@@ -298,7 +303,7 @@ function renderRows(kind, query = "") {
         <td>${displayIndex + 1}</td><td>${escapeHtml(item.db)}</td><td>${escapeHtml(item.user)}</td><td>${escapeHtml(item.pass)}</td>
         <td class="status-normal">${escapeHtml(item.status)}</td>
         <td><div class="row-actions">
-          <button class="manage-button" type="button" data-open-url="http://127.0.0.1/phpmyadmin">phpMyAdmin</button>
+          <button class="manage-button" type="button" data-open-url="${escapeHtml(phpMyAdminUrl())}">phpMyAdmin</button>
           <button class="manage-button" type="button" data-export-database="${index}" data-record-label="${escapeHtml(item.db)}">导出</button>
           <button class="manage-button" type="button" data-row-note="数据库 ${escapeHtml(item.db)} 可通过 phpMyAdmin 或 mysql 客户端做导入、导出、删除等高风险操作。">说明</button>
           <button class="manage-button danger" type="button" data-remove-record="databases" data-record-index="${index}" data-record-label="${escapeHtml(item.db)}">移除</button>
@@ -811,7 +816,7 @@ function bindEvents() {
       }
     }
     if (quickAction?.dataset.action === "open-db-tool") {
-      const url = systemSettings.phpMyAdminUrl || "http://127.0.0.1/phpmyadmin";
+      const url = phpMyAdminUrl();
       addLog("数据库工具已打开");
       if (canUseBackend) await runBackend(() => postApi("/api/open/url", { url }));
       else window.open(url, "_blank");
@@ -900,7 +905,7 @@ function bindEvents() {
       const payload = {
         autostart: !!$("#settingAutostart")?.checked,
         startSuiteOnLaunch: !!$("#settingStartSuite")?.checked,
-        phpMyAdminUrl: $("#settingPhpMyAdmin")?.value || "http://127.0.0.1/phpmyadmin"
+        phpMyAdminUrl: $("#settingPhpMyAdmin")?.value || phpMyAdminUrl()
       };
       await runBackend(() => postApi("/api/settings/system", payload), () => {
         Object.assign(systemSettings, payload);
