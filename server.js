@@ -747,6 +747,12 @@ function assertUniqueSite(site, exceptIndex = -1) {
   }
 }
 
+function assertValidPort(port) {
+  if (!/^\d+$/.test(String(port || ""))) throw new Error("端口必须是数字");
+  const value = Number(port);
+  if (!Number.isInteger(value) || value < 1 || value > 65535) throw new Error("端口必须在 1-65535 之间");
+}
+
 function createSite(data) {
   const site = {
     domain: String(data.domain || "").trim(),
@@ -756,7 +762,7 @@ function createSite(data) {
     expire: data.expire || "2035-12-03"
   };
   if (!site.domain) throw new Error("域名不能为空");
-  if (!/^\d+$/.test(site.port)) throw new Error("端口必须是数字");
+  assertValidPort(site.port);
   assertUniqueSite(site);
 
   ensureDir(site.path);
@@ -785,7 +791,7 @@ function updateSite(indexValue, data) {
     status: data.status || config.sites[index].status || "正常"
   };
   if (!site.domain) throw new Error("域名不能为空");
-  if (!/^\d+$/.test(site.port)) throw new Error("端口必须是数字");
+  assertValidPort(site.port);
   assertUniqueSite(site, index);
   ensureDir(site.path);
   ensureListenPort(site.port);

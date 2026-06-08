@@ -146,6 +146,13 @@ async function main() {
     assert(siteIndex >= 0, "created site should appear in state");
     assert(fs.readFileSync(hostsPath, "utf8").includes("127.0.0.1 smoke.local # XP.CN smoke.local"), "created site should be synced to hosts");
 
+    const invalidCreatePort = await request(port, "/api/sites", {
+      method: "POST",
+      body: { domain: "invalid-port.local", port: "70000", path: path.join(dataDir, "www", "invalid-port.local") }
+    });
+    assert(invalidCreatePort.statusCode === 500, "creating a site with an invalid port should fail");
+    assert(invalidCreatePort.body.includes("1-65535"), "invalid create port response should explain the valid range");
+
     const duplicateSite = await request(port, "/api/sites", {
       method: "POST",
       body: { domain: "SMOKE.local", port: "8088", path: path.join(dataDir, "www", "smoke-duplicate.local") }
@@ -168,6 +175,13 @@ async function main() {
     });
     assert(conflictingEdit.statusCode === 500, "editing a site into an existing domain and port should fail");
     assert(conflictingEdit.body.includes("已存在"), "conflicting edit response should explain the conflict");
+
+    const invalidEditPort = await request(port, `/api/sites/${secondSiteIndex}`, {
+      method: "PUT",
+      body: { domain: "smoke-second.local", port: "0", path: path.join(dataDir, "www", "smoke-invalid-port.local") }
+    });
+    assert(invalidEditPort.statusCode === 500, "editing a site to an invalid port should fail");
+    assert(invalidEditPort.body.includes("1-65535"), "invalid edit port response should explain the valid range");
 
     const deleteSecondSite = await request(port, `/api/sites/${secondSiteIndex}`, { method: "DELETE" });
     assert(deleteSecondSite.statusCode === 200, "removing the second site record should return HTTP 200");
