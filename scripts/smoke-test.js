@@ -135,9 +135,20 @@ async function main() {
     const siteIndex = siteState.websites.findIndex((item) => item.domain === "smoke.local");
     assert(siteIndex >= 0, "created site should appear in state");
 
+    const editedSitePath = path.join(dataDir, "www", "smoke-edited.local");
+    const updateSite = await request(port, `/api/sites/${siteIndex}`, {
+      method: "PUT",
+      body: { domain: "smoke-edited.local", port: "8089", path: editedSitePath }
+    });
+    assert(updateSite.statusCode === 200, "editing a site record should return HTTP 200");
+    const updatedSite = JSON.parse(updateSite.body).state.websites[siteIndex];
+    assert(updatedSite.domain === "smoke-edited.local", "edited site domain should be saved");
+    assert(updatedSite.port === "8089", "edited site port should be saved");
+    assert(fs.existsSync(editedSitePath), "edited site directory should be created");
+
     const deleteSite = await request(port, `/api/sites/${siteIndex}`, { method: "DELETE" });
     assert(deleteSite.statusCode === 200, "removing a site record should return HTTP 200");
-    assert(!JSON.parse(deleteSite.body).state.websites.some((item) => item.domain === "smoke.local"), "removed site should disappear from state");
+    assert(!JSON.parse(deleteSite.body).state.websites.some((item) => item.domain === "smoke-edited.local"), "removed site should disappear from state");
 
     const createFtp = await request(port, "/api/ftp", {
       method: "POST",
@@ -147,6 +158,17 @@ async function main() {
     const ftpState = JSON.parse(createFtp.body).state;
     const ftpIndex = ftpState.ftpAccounts.findIndex((item) => item.user === "smoke_ftp");
     assert(ftpIndex >= 0, "created FTP record should appear in state");
+
+    const editedFtpPath = path.join(dataDir, "ftp-edited");
+    const updateFtp = await request(port, `/api/ftp/${ftpIndex}`, {
+      method: "PUT",
+      body: { user: "smoke_ftp_edited", path: editedFtpPath, permission: "只读" }
+    });
+    assert(updateFtp.statusCode === 200, "editing an FTP record should return HTTP 200");
+    const updatedFtp = JSON.parse(updateFtp.body).state.ftpAccounts[ftpIndex];
+    assert(updatedFtp.user === "smoke_ftp_edited", "edited FTP user should be saved");
+    assert(updatedFtp.permission === "只读", "edited FTP permission should be saved");
+    assert(fs.existsSync(editedFtpPath), "edited FTP directory should be created");
 
     const deleteFtp = await request(port, `/api/ftp/${ftpIndex}`, { method: "DELETE" });
     assert(deleteFtp.statusCode === 200, "removing an FTP record should return HTTP 200");

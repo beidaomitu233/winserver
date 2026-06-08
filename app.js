@@ -64,6 +64,7 @@ let activeConfig = "php.ini";
 let activeView = "home";
 let activeSettings = "config";
 let modalType = "";
+let modalIndex = -1;
 let backendOnline = false;
 const configContents = {};
 const systemSettings = {
@@ -273,6 +274,7 @@ function renderRows(kind, query = "") {
         <td class="status-normal">${escapeHtml(item.status)}</td><td>${escapeHtml(item.expire)}</td>
         <td><div class="row-actions">
           <button class="manage-button" type="button" data-open-folder="${escapeHtml(item.path)}">目录</button>
+          <button class="manage-button" type="button" data-edit-record="site" data-record-index="${index}">编辑</button>
           <button class="manage-button" type="button" data-open-config="vhosts.conf">配置</button>
           <button class="manage-button danger" type="button" data-remove-record="sites" data-record-index="${index}" data-record-label="${escapeHtml(item.domain)}">移除</button>
         </div></td>
@@ -299,6 +301,7 @@ function renderRows(kind, query = "") {
         <td class="status-normal">${escapeHtml(item.status)}</td>
         <td><div class="row-actions">
           <button class="manage-button" type="button" data-open-folder="${escapeHtml(item.path)}">目录</button>
+          <button class="manage-button" type="button" data-edit-record="ftp" data-record-index="${index}">编辑</button>
           <button class="manage-button" type="button" data-row-note="FTP 账号 ${escapeHtml(item.user)} 已记录在本地配置中。需要真实 FileZilla 用户同步时，可继续接入 FileZilla Server 配置写入。">说明</button>
           <button class="manage-button danger" type="button" data-remove-record="ftp" data-record-index="${index}" data-record-label="${escapeHtml(item.user)}">移除</button>
         </div></td>
@@ -482,15 +485,20 @@ function field(label, name, value = "", type = "text") {
   `;
 }
 
-function openModal(type, title = "") {
+function openModal(type, title = "", initial = {}, index = -1) {
   modalType = type;
+  modalIndex = index;
   const modalTitle = $("#modalTitle");
   const fields = $("#modalFields");
 
   const templates = {
     site: {
       title: "创建网站",
-      html: field("域名", "domain", "demo.local") + field("端口", "port", "80") + field("根目录", "path", "D:/phpstudy_pro/WWW/demo")
+      html: field("域名", "domain", initial.domain || "demo.local") + field("端口", "port", initial.port || "80") + field("根目录", "path", initial.path || "D:/phpstudy_pro/WWW/demo")
+    },
+    "site-edit": {
+      title: "编辑网站",
+      html: field("域名", "domain", initial.domain || "") + field("端口", "port", initial.port || "80") + field("根目录", "path", initial.path || "")
     },
     database: {
       title: "创建数据库",
@@ -498,7 +506,11 @@ function openModal(type, title = "") {
     },
     ftp: {
       title: "创建FTP",
-      html: field("用户名", "user", "demo_ftp") + field("根目录", "path", "D:/phpstudy_pro/WWW/demo") + field("权限", "permission", "读写")
+      html: field("用户名", "user", initial.user || "demo_ftp") + field("根目录", "path", initial.path || "D:/phpstudy_pro/WWW/demo") + field("权限", "permission", initial.permission || "读写")
+    },
+    "ftp-edit": {
+      title: "编辑FTP",
+      html: field("用户名", "user", initial.user || "") + field("根目录", "path", initial.path || "") + field("权限", "permission", initial.permission || "读写")
     },
     root: {
       title: "修改root密码",
@@ -522,6 +534,7 @@ function closeModal() {
   $("#modalBackdrop").classList.remove("is-open");
   $("#modalBackdrop").setAttribute("aria-hidden", "true");
   $("#modalForm").reset();
+  modalIndex = -1;
 }
 
 async function handleModalSubmit(event) {
@@ -532,8 +545,10 @@ async function handleModalSubmit(event) {
   try {
     if (canUseBackend) {
       if (modalType === "site") await postApi("/api/sites", data);
+      if (modalType === "site-edit") await api(`/api/sites/${modalIndex}`, { method: "PUT", body: JSON.stringify(data) }).then((result) => result.state ? applyState(result.state) : result);
       if (modalType === "database") await postApi("/api/databases", data);
       if (modalType === "ftp") await postApi("/api/ftp", data);
+      if (modalType === "ftp-edit") await api(`/api/ftp/${modalIndex}`, { method: "PUT", body: JSON.stringify(data) }).then((result) => result.state ? applyState(result.state) : result);
       if (modalType === "root") await postApi("/api/databases/root-password", data);
       closeModal();
       return;
@@ -544,6 +559,11 @@ async function handleModalSubmit(event) {
       renderRows("website");
       addLog(`网站 ${data.domain} 已创建`);
     }
+    if (modalType === "site-edit" && websites[modalIndex]) {
+      websites[modalIndex] = { ...websites[modalIndex], domain: data.domain, port: data.port, path: data.path };
+      renderRows("website");
+      addLog(`网站 ${data.domain} 已更新`);
+    }
     if (modalType === "database") {
       databases.push({ db: data.db, user: data.user, pass: "******", status: "正常" });
       renderRows("database");
@@ -553,6 +573,11 @@ async function handleModalSubmit(event) {
       ftpAccounts.push({ user: data.user, path: data.path, permission: data.permission, status: "正常" });
       renderRows("ftp");
       addLog(`FTP账号 ${data.user} 已创建`);
+    }
+    if (modalType === "ftp-edit" && ftpAccounts[modalIndex]) {
+      ftpAccounts[modalIndex] = { ...ftpAccounts[modalIndex], user: data.user, path: data.path, permission: data.permission };
+      renderRows("ftp");
+      addLog(`FTP账号 ${data.user} 已更新`);
     }
     if (modalType === "root") addLog("root 密码已修改");
     closeModal();
@@ -653,6 +678,18 @@ function bindEvents() {
     if (rowNote) {
       openModal("config", "操作说明");
       $("#modalFields").innerHTML = `<p class="modal-note">${escapeHtml(rowNote.dataset.rowNote)}</p>`;
+    }
+
+    const editRecord = event.target.closest("[data-edit-record]");
+    if (editRecord) {
+      const index = Number(editRecord.dataset.recordIndex);
+      if (!Number.isInteger(index)) return;
+      if (editRecord.dataset.editRecord === "site" && websites[index]) {
+        openModal("site-edit", "", websites[index], index);
+      }
+      if (editRecord.dataset.editRecord === "ftp" && ftpAccounts[index]) {
+        openModal("ftp-edit", "", ftpAccounts[index], index);
+      }
     }
 
     const removeRecord = event.target.closest("[data-remove-record]");

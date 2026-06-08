@@ -623,6 +623,29 @@ function ensureListenPort(port) {
   }
 }
 
+function siteConfigName(index, site) {
+  return `${index}${safeName(site.domain)}_${site.port}.conf`;
+}
+
+function removeSiteConfig(index, site) {
+  if (!site) return;
+  const fileBase = siteConfigName(index, site);
+  const apacheFile = path.join(config.paths.apacheRoot, "conf", "vhosts", fileBase);
+  const nginxFile = path.join(config.paths.nginxRoot, "conf", "vhosts", fileBase);
+  for (const filePath of [apacheFile, nginxFile]) {
+    if (exists(filePath)) backupFile(filePath);
+    if (exists(filePath)) fs.unlinkSync(filePath);
+  }
+}
+
+function writeSiteConfig(index, site) {
+  const fileBase = siteConfigName(index, site);
+  const apacheDir = path.join(config.paths.apacheRoot, "conf", "vhosts");
+  const nginxDir = path.join(config.paths.nginxRoot, "conf", "vhosts");
+  if (exists(apacheDir)) fs.writeFileSync(path.join(apacheDir, fileBase), apacheVhost(site), "utf8");
+  if (exists(nginxDir)) fs.writeFileSync(path.join(nginxDir, fileBase), nginxVhost(site), "utf8");
+}
+
 function createSite(data) {
   const site = {
     domain: String(data.domain || "").trim(),
@@ -637,14 +660,35 @@ function createSite(data) {
   ensureDir(site.path);
   ensureListenPort(site.port);
 
-  const fileBase = `${config.sites.length}${safeName(site.domain)}_${site.port}.conf`;
-  const apacheDir = path.join(config.paths.apacheRoot, "conf", "vhosts");
-  const nginxDir = path.join(config.paths.nginxRoot, "conf", "vhosts");
-  if (exists(apacheDir)) fs.writeFileSync(path.join(apacheDir, fileBase), apacheVhost(site), "utf8");
-  if (exists(nginxDir)) fs.writeFileSync(path.join(nginxDir, fileBase), nginxVhost(site), "utf8");
+  writeSiteConfig(config.sites.length, site);
 
   config.sites.push(site);
   addLog(`网站 ${site.domain}:${site.port} 已创建`);
+  saveConfig();
+  return site;
+}
+
+function updateSite(indexValue, data) {
+  const index = Number(indexValue);
+  if (!Number.isInteger(index) || index < 0 || index >= config.sites.length) {
+    throw new Error("网站记录不存在");
+  }
+  const site = {
+    ...config.sites[index],
+    domain: String(data.domain || "").trim(),
+    port: String(data.port || "80").trim(),
+    path: toSlash(data.path || config.sites[index].path),
+    expire: data.expire || config.sites[index].expire || "2035-12-03",
+    status: data.status || config.sites[index].status || "正常"
+  };
+  if (!site.domain) throw new Error("域名不能为空");
+  if (!/^\d+$/.test(site.port)) throw new Error("端口必须是数字");
+  ensureDir(site.path);
+  ensureListenPort(site.port);
+  removeSiteConfig(index, config.sites[index]);
+  writeSiteConfig(index, site);
+  config.sites[index] = site;
+  addLog(`网站 ${site.domain}:${site.port} 已更新`);
   saveConfig();
   return site;
 }
@@ -710,6 +754,26 @@ function createFtpAccount(data) {
   ensureDir(account.path);
   config.ftpAccounts.push(account);
   addLog(`FTP账号 ${account.user} 已创建`);
+  saveConfig();
+  return account;
+}
+
+function updateFtpAccount(indexValue, data) {
+  const index = Number(indexValue);
+  if (!Number.isInteger(index) || index < 0 || index >= config.ftpAccounts.length) {
+    throw new Error("FTP 记录不存在");
+  }
+  const account = {
+    ...config.ftpAccounts[index],
+    user: String(data.user || "").trim(),
+    path: toSlash(data.path || config.ftpAccounts[index].path),
+    permission: String(data.permission || config.ftpAccounts[index].permission || "读写"),
+    status: data.status || config.ftpAccounts[index].status || "正常"
+  };
+  if (!account.user) throw new Error("FTP 用户名不能为空");
+  ensureDir(account.path);
+  config.ftpAccounts[index] = account;
+  addLog(`FTP账号 ${account.user} 已更新`);
   saveConfig();
   return account;
 }
@@ -1069,6 +1133,12 @@ async function handleApi(req, res) {
       return;
     }
 
+    if (req.method === "PUT" && parts[1] === "sites" && parts.length === 3) {
+      const body = await readJsonBody(req);
+      send(res, 200, { ok: true, site: updateSite(parts[2], body), state: await state() });
+      return;
+    }
+
     if (req.method === "DELETE" && parts[1] === "sites" && parts.length === 3) {
       const result = removeRecord("sites", parts[2]);
       send(res, 200, { ok: true, ...result, state: await state() });
@@ -1096,6 +1166,12 @@ async function handleApi(req, res) {
     if (req.method === "POST" && requestUrl.pathname === "/api/ftp") {
       const body = await readJsonBody(req);
       send(res, 200, { ok: true, account: createFtpAccount(body), state: await state() });
+      return;
+    }
+
+    if (req.method === "PUT" && parts[1] === "ftp" && parts.length === 3) {
+      const body = await readJsonBody(req);
+      send(res, 200, { ok: true, account: updateFtpAccount(parts[2], body), state: await state() });
       return;
     }
 
