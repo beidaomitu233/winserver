@@ -409,6 +409,49 @@ async function main() {
     assert(suiteStopResults.some((line) => line.includes("Redis7.2.4")), "suite should include redis after enabling auto");
     assert(suiteStopResults.some((line) => line.includes("PHP7.3 CGI")), "suite should include PHP-CGI by default");
 
+    const portSettings = await request(port, "/api/settings/system", {
+      method: "POST",
+      body: {
+        phpCgiPort: "9173",
+        minioApiPort: "9100",
+        minioConsolePort: "9101"
+      }
+    });
+    assert(portSettings.statusCode === 200, "saving service ports should return HTTP 200");
+    const portState = JSON.parse(portSettings.body).systemSettings;
+    assert(portState.php.cgiPort === 9173, "PHP-CGI port should be saved as a number");
+    assert(portState.minio.apiPort === 9100, "MinIO API port should be saved as a number");
+    assert(portState.minio.consolePort === 9101, "MinIO console port should be saved as a number");
+    const stateAfterPortSettings = await request(port, "/api/state");
+    const serviceStateAfterPortSettings = JSON.parse(stateAfterPortSettings.body);
+    const phpAfterPortSettings = serviceStateAfterPortSettings.services.find((item) => item.id === "php73");
+    const minioAfterPortSettings = serviceStateAfterPortSettings.services.find((item) => item.id === "minio");
+    assert(phpAfterPortSettings.port === 9173, "PHP service port should refresh after saving settings");
+    assert(minioAfterPortSettings.port === 9100, "MinIO service port should refresh after saving settings");
+    const portSite = await request(port, "/api/sites", {
+      method: "POST",
+      body: { domain: "port-smoke.local", port: "8092", path: path.join(dataDir, "www", "port-smoke.local") }
+    });
+    assert(portSite.statusCode === 200, "creating a site after changing PHP port should return HTTP 200");
+    const portSiteVhost = path.join(nginxVhostsDir, "port-smoke.local_8092.conf");
+    assert(fs.readFileSync(portSiteVhost, "utf8").includes("fastcgi_pass   127.0.0.1:9173;"), "new Nginx vhost should use the updated PHP-CGI port");
+    const portSiteState = JSON.parse(portSite.body).state;
+    const portSiteIndex = portSiteState.websites.findIndex((item) => item.domain === "port-smoke.local");
+    assert(portSiteIndex >= 0, "port smoke site should appear in state");
+    const deletePortSite = await request(port, `/api/sites/${portSiteIndex}`, { method: "DELETE" });
+    assert(deletePortSite.statusCode === 200, "removing the port smoke site should return HTTP 200");
+
+    const conflictPortSettings = await request(port, "/api/settings/system", {
+      method: "POST",
+      body: {
+        phpCgiPort: "9100",
+        minioApiPort: "9100",
+        minioConsolePort: "9101"
+      }
+    });
+    assert(conflictPortSettings.statusCode === 500, "saving duplicate service ports should fail");
+    assert(conflictPortSettings.body.includes("端口不能重复"), "duplicate service port response should explain the conflict");
+
     const redisOff = await request(port, "/api/services/redis/auto", {
       method: "POST",
       body: { auto: false }
@@ -428,7 +471,10 @@ async function main() {
       body: {
         autostart: true,
         startSuiteOnLaunch: true,
-        phpMyAdminUrl: "http://127.0.0.1:18113/phpmyadmin"
+        phpMyAdminUrl: "http://127.0.0.1:18113/phpmyadmin",
+        phpCgiPort: "9073",
+        minioApiPort: "9000",
+        minioConsolePort: "9001"
       }
     });
     assert(settingsOn.statusCode === 200, "saving system settings should return HTTP 200");

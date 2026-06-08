@@ -266,7 +266,7 @@ function defaultConfig() {
         port: 9000,
         cwd: toSlash(p.minioRoot),
         exe: toSlash(path.join(p.minioRoot, "minio.exe")),
-        args: ["server", toSlash(minioData), "--console-address", ":9001"],
+        args: ["server", toSlash(minioData), "--address", ":9000", "--console-address", ":9001"],
         env: {
           MINIO_ROOT_USER: "minioadmin",
           MINIO_ROOT_PASSWORD: "minioadmin"
@@ -492,6 +492,8 @@ function refreshDerivedPaths() {
   const p = config.paths;
   const minioData = config.minio.dataDir || slashJoin(p.minioRoot, "data");
   const phpCgiPort = Number(config.php?.cgiPort || 9073);
+  const minioApiPort = Number(config.minio.apiPort || 9000);
+  const minioConsolePort = Number(config.minio.consolePort || 9001);
 
   updateKnownService("apache", {
     cwd: toSlash(p.apacheRoot),
@@ -548,7 +550,8 @@ function refreshDerivedPaths() {
   updateKnownService("minio", {
     cwd: toSlash(p.minioRoot),
     exe: slashJoin(p.minioRoot, "minio.exe"),
-    args: ["server", toSlash(minioData), "--console-address", `:${config.minio.consolePort}`],
+    port: minioApiPort,
+    args: ["server", toSlash(minioData), "--address", `:${minioApiPort}`, "--console-address", `:${minioConsolePort}`],
     env: {
       MINIO_ROOT_USER: config.minio.rootUser,
       MINIO_ROOT_PASSWORD: config.minio.rootPassword
@@ -993,6 +996,15 @@ function assertValidPort(port) {
   if (!Number.isInteger(value) || value < 1 || value > 65535) throw new Error("端口必须在 1-65535 之间");
 }
 
+function normalizeServicePort(port, label) {
+  try {
+    assertValidPort(port);
+  } catch (error) {
+    throw new Error(`${label}${error.message}`);
+  }
+  return Number(port);
+}
+
 function isValidIpv4(domain) {
   const parts = domain.split(".");
   return parts.length === 4 && parts.every((part) => {
@@ -1406,6 +1418,12 @@ function publicSystemSettings() {
     autostartPath: STARTUP_COMMAND,
     autostartInstalled: STARTUP_COMMAND ? exists(STARTUP_COMMAND) : false,
     paths: config.paths,
+    php: config.php,
+    minio: {
+      apiPort: config.minio.apiPort,
+      consolePort: config.minio.consolePort,
+      dataDir: config.minio.dataDir
+    },
     editablePathLabels: EDITABLE_PATH_LABELS
   };
 }
@@ -1427,7 +1445,25 @@ function updateSystemSettings(data) {
     next.phpMyAdminUrl = url;
   }
 
+  const nextPhp = { ...config.php };
+  const nextMinio = { ...config.minio };
+  if (Object.prototype.hasOwnProperty.call(data, "phpCgiPort")) {
+    nextPhp.cgiPort = normalizeServicePort(data.phpCgiPort, "PHP-CGI ");
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "minioApiPort")) {
+    nextMinio.apiPort = normalizeServicePort(data.minioApiPort, "MinIO API ");
+  }
+  if (Object.prototype.hasOwnProperty.call(data, "minioConsolePort")) {
+    nextMinio.consolePort = normalizeServicePort(data.minioConsolePort, "MinIO 控制台 ");
+  }
+  if (nextPhp.cgiPort === nextMinio.apiPort || nextPhp.cgiPort === nextMinio.consolePort || nextMinio.apiPort === nextMinio.consolePort) {
+    throw new Error("PHP-CGI、MinIO API 和 MinIO 控制台端口不能重复");
+  }
+
   config.systemSettings = next;
+  config.php = nextPhp;
+  config.minio = nextMinio;
+  refreshDerivedPaths();
   saveConfig();
   addLog("系统设置已保存");
   return publicSystemSettings();
@@ -1657,7 +1693,8 @@ function applyServiceInstallPath(software) {
     service.configFile = toSlash(path.join(software.installDir, "redis.conf"));
   }
   if (service.id === "minio") {
-    service.args = ["server", toSlash(config.minio.dataDir), "--console-address", `:${config.minio.consolePort}`];
+    service.port = Number(config.minio.apiPort || 9000);
+    service.args = ["server", toSlash(config.minio.dataDir), "--address", `:${config.minio.apiPort || 9000}`, "--console-address", `:${config.minio.consolePort || 9001}`];
     service.configFile = toSlash(path.join(software.installDir, "minio.env"));
   }
 }

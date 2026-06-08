@@ -84,4 +84,4 @@ codex/simple-web-manager
 
 首次启动会生成 `data/config.json`，其中包含本机路径、服务列表、站点、数据库和日志等运行态数据。该文件已加入 `.gitignore`，避免不同 UI 分支之间互相污染本机配置。
 
-默认 PHP-CGI 监听 `127.0.0.1:9073`，避免与 MinIO API 默认端口 `9000` 冲突；创建站点时生成的 Nginx vhost 会自动使用该端口。
+默认 PHP-CGI 监听 `127.0.0.1:9073`，避免与 MinIO API 默认端口 `9000` 冲突；创建站点时生成的 Nginx vhost 会自动使用该端口。PHP-CGI、MinIO API 和 MinIO 控制台端口可在“设置 / 系统设置”中调整。

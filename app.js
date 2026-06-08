@@ -81,6 +81,8 @@ const systemSettings = {
   autostartPath: "",
   autostartInstalled: false,
   paths: {},
+  php: {},
+  minio: {},
   editablePathLabels: {}
 };
 
@@ -496,6 +498,18 @@ function renderSystemSettings() {
       <label class="settings-field" for="settingPhpMyAdmin">
         <span>phpMyAdmin 地址</span>
         <input id="settingPhpMyAdmin" type="url" value="${escapeHtml(systemSettings.phpMyAdminUrl || "")}" placeholder="http://127.0.0.1/phpmyadmin" />
+      </label>
+      <label class="settings-field" for="settingPhpCgiPort">
+        <span>PHP-CGI 端口</span>
+        <input id="settingPhpCgiPort" type="number" min="1" max="65535" value="${escapeHtml(systemSettings.php?.cgiPort || 9073)}" />
+      </label>
+      <label class="settings-field" for="settingMinioApiPort">
+        <span>MinIO API 端口</span>
+        <input id="settingMinioApiPort" type="number" min="1" max="65535" value="${escapeHtml(systemSettings.minio?.apiPort || 9000)}" />
+      </label>
+      <label class="settings-field" for="settingMinioConsolePort">
+        <span>MinIO 控制台端口</span>
+        <input id="settingMinioConsolePort" type="number" min="1" max="65535" value="${escapeHtml(systemSettings.minio?.consolePort || 9001)}" />
       </label>
       <div class="settings-readonly">
         <div><span>管理台端口</span><strong>${escapeHtml(systemSettings.port || "")}</strong></div>
@@ -988,7 +1002,10 @@ function bindEvents() {
       const payload = {
         autostart: !!$("#settingAutostart")?.checked,
         startSuiteOnLaunch: !!$("#settingStartSuite")?.checked,
-        phpMyAdminUrl: $("#settingPhpMyAdmin")?.value || phpMyAdminUrl()
+        phpMyAdminUrl: $("#settingPhpMyAdmin")?.value || phpMyAdminUrl(),
+        phpCgiPort: $("#settingPhpCgiPort")?.value || 9073,
+        minioApiPort: $("#settingMinioApiPort")?.value || 9000,
+        minioConsolePort: $("#settingMinioConsolePort")?.value || 9001
       };
       await runBackend(() => postApi("/api/settings/system", payload), () => {
         Object.assign(systemSettings, payload);
