@@ -128,6 +128,13 @@ async function postApi(path, body = {}) {
   return result;
 }
 
+async function deleteApi(path) {
+  const result = await api(path, { method: "DELETE" });
+  if (result.state) applyState(result.state);
+  else if (result.message) addLog(result.message);
+  return result;
+}
+
 async function runBackend(action, fallback) {
   try {
     if (backendOnline || canUseBackend) {
@@ -230,44 +237,49 @@ function renderRows(kind, query = "") {
     website: {
       target: "#websiteRows",
       data: websites,
-      cells: (item, index) => `
-        <td>${index + 1}</td><td>${escapeHtml(item.domain)}</td><td>${escapeHtml(item.port)}</td><td class="path">${escapeHtml(item.path)}</td>
+      cells: (item, index, displayIndex) => `
+        <td>${displayIndex + 1}</td><td>${escapeHtml(item.domain)}</td><td>${escapeHtml(item.port)}</td><td class="path">${escapeHtml(item.path)}</td>
         <td class="status-normal">${escapeHtml(item.status)}</td><td>${escapeHtml(item.expire)}</td>
         <td><div class="row-actions">
           <button class="manage-button" type="button" data-open-folder="${escapeHtml(item.path)}">目录</button>
           <button class="manage-button" type="button" data-open-config="vhosts.conf">配置</button>
+          <button class="manage-button danger" type="button" data-remove-record="sites" data-record-index="${index}" data-record-label="${escapeHtml(item.domain)}">移除</button>
         </div></td>
       `
     },
     database: {
       target: "#databaseRows",
       data: databases,
-      cells: (item, index) => `
-        <td>${index + 1}</td><td>${escapeHtml(item.db)}</td><td>${escapeHtml(item.user)}</td><td>${escapeHtml(item.pass)}</td>
+      cells: (item, index, displayIndex) => `
+        <td>${displayIndex + 1}</td><td>${escapeHtml(item.db)}</td><td>${escapeHtml(item.user)}</td><td>${escapeHtml(item.pass)}</td>
         <td class="status-normal">${escapeHtml(item.status)}</td>
         <td><div class="row-actions">
           <button class="manage-button" type="button" data-open-url="http://127.0.0.1/phpmyadmin">phpMyAdmin</button>
           <button class="manage-button" type="button" data-row-note="数据库 ${escapeHtml(item.db)} 可通过 phpMyAdmin 或 mysql 客户端做导入、导出、删除等高风险操作。">说明</button>
+          <button class="manage-button danger" type="button" data-remove-record="databases" data-record-index="${index}" data-record-label="${escapeHtml(item.db)}">移除</button>
         </div></td>
       `
     },
     ftp: {
       target: "#ftpRows",
       data: ftpAccounts,
-      cells: (item, index) => `
-        <td>${index + 1}</td><td>${escapeHtml(item.user)}</td><td class="path">${escapeHtml(item.path)}</td><td>${escapeHtml(item.permission)}</td>
+      cells: (item, index, displayIndex) => `
+        <td>${displayIndex + 1}</td><td>${escapeHtml(item.user)}</td><td class="path">${escapeHtml(item.path)}</td><td>${escapeHtml(item.permission)}</td>
         <td class="status-normal">${escapeHtml(item.status)}</td>
         <td><div class="row-actions">
           <button class="manage-button" type="button" data-open-folder="${escapeHtml(item.path)}">目录</button>
           <button class="manage-button" type="button" data-row-note="FTP 账号 ${escapeHtml(item.user)} 已记录在本地配置中。需要真实 FileZilla 用户同步时，可继续接入 FileZilla Server 配置写入。">说明</button>
+          <button class="manage-button danger" type="button" data-remove-record="ftp" data-record-index="${index}" data-record-label="${escapeHtml(item.user)}">移除</button>
         </div></td>
       `
     }
   };
 
   const config = configsByKind[kind];
-  const rows = config.data.filter((item) => JSON.stringify(item).toLowerCase().includes(q));
-  $(config.target).innerHTML = rows.map((item, index) => `<tr>${config.cells(item, index)}</tr>`).join("");
+  const rows = config.data
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => JSON.stringify(item).toLowerCase().includes(q));
+  $(config.target).innerHTML = rows.map(({ item, index }, displayIndex) => `<tr>${config.cells(item, index, displayIndex)}</tr>`).join("");
 }
 
 function renderSoftwareTabs() {
@@ -508,6 +520,30 @@ function bindEvents() {
     if (rowNote) {
       openModal("config", "操作说明");
       $("#modalFields").innerHTML = `<p class="modal-note">${escapeHtml(rowNote.dataset.rowNote)}</p>`;
+    }
+
+    const removeRecord = event.target.closest("[data-remove-record]");
+    if (removeRecord) {
+      const kind = removeRecord.dataset.removeRecord;
+      const index = Number(removeRecord.dataset.recordIndex);
+      const label = removeRecord.dataset.recordLabel || "该记录";
+      if (!Number.isInteger(index)) return;
+      const confirmed = window.confirm(`只会从管理台移除记录，不会删除本机文件或数据库。\n确认移除 ${label}？`);
+      if (!confirmed) return;
+      if (canUseBackend) {
+        await runBackend(() => deleteApi(`/api/${kind}/${index}`));
+      } else {
+        const local = {
+          sites: { label: "网站", items: websites, view: "website" },
+          databases: { label: "数据库", items: databases, view: "database" },
+          ftp: { label: "FTP账号", items: ftpAccounts, view: "ftp" }
+        }[kind];
+        if (local && local.items[index]) {
+          local.items.splice(index, 1);
+          addLog(`${local.label} ${label} 已从管理台移除`);
+          renderRows(local.view);
+        }
+      }
     }
 
     const closeButton = event.target.closest('[data-action="close-modal"]');

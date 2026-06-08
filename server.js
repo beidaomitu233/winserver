@@ -7,7 +7,7 @@ const net = require("net");
 const { spawn, execFile } = require("child_process");
 
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, "data");
+const DATA_DIR = process.env.XPCN_DATA_DIR ? path.resolve(process.env.XPCN_DATA_DIR) : path.join(ROOT, "data");
 const CONFIG_PATH = path.join(DATA_DIR, "config.json");
 const RUNTIME_DIR = path.join(ROOT, "runtime");
 const PORT_OVERRIDE = process.env.XPCN_PORT !== undefined && process.env.XPCN_PORT !== "";
@@ -672,6 +672,41 @@ function createFtpAccount(data) {
   return account;
 }
 
+function removeRecord(kind, indexValue) {
+  const collections = {
+    sites: {
+      label: "网站",
+      items: config.sites,
+      describe: (item) => `${item.domain}:${item.port}`
+    },
+    databases: {
+      label: "数据库",
+      items: config.databases,
+      describe: (item) => item.db,
+      guard: (item) => item.db === "root" ? "root 数据库记录不能移除" : ""
+    },
+    ftp: {
+      label: "FTP账号",
+      items: config.ftpAccounts,
+      describe: (item) => item.user
+    }
+  };
+  const collection = collections[kind];
+  if (!collection) throw new Error("记录类型不存在");
+  const index = Number(indexValue);
+  if (!Number.isInteger(index) || index < 0 || index >= collection.items.length) {
+    throw new Error("记录不存在");
+  }
+  const record = collection.items[index];
+  const guarded = collection.guard ? collection.guard(record) : "";
+  if (guarded) throw new Error(guarded);
+  const [removed] = collection.items.splice(index, 1);
+  const message = `${collection.label} ${collection.describe(removed)} 已从管理台移除`;
+  addLog(message);
+  saveConfig();
+  return { message, removed };
+}
+
 function getConfigFile(id) {
   const item = config.configFiles.find((file) => file.id === id);
   if (!item) throw new Error("配置文件不存在");
@@ -921,9 +956,21 @@ async function handleApi(req, res) {
       return;
     }
 
+    if (req.method === "DELETE" && parts[1] === "sites" && parts.length === 3) {
+      const result = removeRecord("sites", parts[2]);
+      send(res, 200, { ok: true, ...result, state: await state() });
+      return;
+    }
+
     if (req.method === "POST" && requestUrl.pathname === "/api/databases") {
       const body = await readJsonBody(req);
       send(res, 200, { ok: true, database: await createDatabase(body), state: await state() });
+      return;
+    }
+
+    if (req.method === "DELETE" && parts[1] === "databases" && parts.length === 3) {
+      const result = removeRecord("databases", parts[2]);
+      send(res, 200, { ok: true, ...result, state: await state() });
       return;
     }
 
@@ -936,6 +983,12 @@ async function handleApi(req, res) {
     if (req.method === "POST" && requestUrl.pathname === "/api/ftp") {
       const body = await readJsonBody(req);
       send(res, 200, { ok: true, account: createFtpAccount(body), state: await state() });
+      return;
+    }
+
+    if (req.method === "DELETE" && parts[1] === "ftp" && parts.length === 3) {
+      const result = removeRecord("ftp", parts[2]);
+      send(res, 200, { ok: true, ...result, state: await state() });
       return;
     }
 

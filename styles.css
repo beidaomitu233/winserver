@@ -550,6 +550,15 @@ tbody td.path {
   color: var(--blue);
 }
 
+.manage-button.danger {
+  border-color: #f2d7dc;
+  color: var(--red);
+}
+
+.manage-button.danger:hover {
+  background: #fff6f7;
+}
+
 .row-actions {
   display: inline-flex;
   justify-content: center;
