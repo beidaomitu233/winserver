@@ -965,7 +965,7 @@ tbody td.path {
 
 .settings-field span,
 .settings-readonly span,
-.path-row span {
+.path-row label {
   color: #667587;
 }
 
@@ -997,14 +997,22 @@ tbody td.path {
   grid-template-columns: 132px minmax(0, 1fr);
 }
 
-.settings-readonly strong,
-.path-row strong {
+.settings-readonly strong {
   min-width: 0;
   overflow: hidden;
   color: #334154;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.path-row input {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid #dce4ec;
+  padding: 0 10px;
+  outline: none;
+  color: #334154;
 }
 
 .path-list {

@@ -92,6 +92,37 @@ function detectPaths() {
   };
 }
 
+const EDITABLE_PATH_LABELS = {
+  phpStudyRoot: "phpStudy 根目录",
+  wwwRoot: "网站根目录",
+  apacheRoot: "Apache",
+  nginxRoot: "Nginx",
+  mysql57Root: "MySQL 5.7",
+  mysql80Root: "MySQL 8.0",
+  phpRoot: "PHP",
+  ftpRoot: "FTP",
+  redisRoot: "Redis",
+  minioRoot: "MinIO"
+};
+
+const PHPSTUDY_CHILD_PATHS = {
+  wwwRoot: ["WWW"],
+  apacheRoot: ["Extensions", "Apache2.4.39"],
+  nginxRoot: ["Extensions", "Nginx1.15.11"],
+  mysql57Root: ["Extensions", "MySQL5.7.26"],
+  mysql80Root: ["Extensions", "MySQL8.0.12"],
+  phpRoot: ["Extensions", "php", "php7.3.4nts"],
+  ftpRoot: ["Extensions", "FTP0.9.60"]
+};
+
+function slashJoin(...parts) {
+  return toSlash(path.join(...parts));
+}
+
+function phpStudyChildPaths(root) {
+  return Object.fromEntries(Object.entries(PHPSTUDY_CHILD_PATHS).map(([key, segments]) => [key, slashJoin(root, ...segments)]));
+}
+
 function defaultConfig() {
   const p = detectPaths();
   const minioData = exists("D:/minio") ? "D:/minio" : path.join(p.minioRoot, "data");
@@ -378,6 +409,131 @@ function loadConfig() {
 }
 
 let config = loadConfig();
+
+function serviceById(id) {
+  return config.services.find((service) => service.id === id);
+}
+
+function softwareById(id) {
+  return config.software.find((software) => software.id === id);
+}
+
+function updateKnownService(id, values) {
+  const service = serviceById(id);
+  if (service) Object.assign(service, values);
+}
+
+function updateKnownSoftware(id, values) {
+  const item = softwareById(id);
+  if (item) Object.assign(item, values);
+}
+
+function updateKnownConfigFile(id, filePath) {
+  const item = config.configFiles.find((file) => file.id === id);
+  if (item) item.path = toSlash(filePath);
+}
+
+function refreshDerivedPaths() {
+  const p = config.paths;
+  const minioData = config.minio.dataDir || slashJoin(p.minioRoot, "data");
+
+  updateKnownService("apache", {
+    cwd: toSlash(p.apacheRoot),
+    exe: slashJoin(p.apacheRoot, "bin", "httpd.exe"),
+    args: ["-f", slashJoin(p.apacheRoot, "conf", "httpd.conf")],
+    configFile: slashJoin(p.apacheRoot, "conf", "httpd.conf")
+  });
+  updateKnownService("ftp", {
+    cwd: toSlash(p.ftpRoot),
+    exe: slashJoin(p.ftpRoot, "FileZilla Server.exe"),
+    args: [],
+    configFile: slashJoin(p.ftpRoot, "FileZilla Server.xml")
+  });
+  updateKnownService("mysql57", {
+    cwd: toSlash(p.mysql57Root),
+    exe: slashJoin(p.mysql57Root, "bin", "mysqld.exe"),
+    args: [`--defaults-file=${slashJoin(p.mysql57Root, "my.ini")}`],
+    clientExe: slashJoin(p.mysql57Root, "bin", "mysql.exe"),
+    configFile: slashJoin(p.mysql57Root, "my.ini")
+  });
+  updateKnownService("mysql80", {
+    cwd: toSlash(p.mysql80Root),
+    exe: slashJoin(p.mysql80Root, "bin", "mysqld.exe"),
+    args: [`--defaults-file=${slashJoin(p.mysql80Root, "my.ini")}`],
+    clientExe: slashJoin(p.mysql80Root, "bin", "mysql.exe"),
+    configFile: slashJoin(p.mysql80Root, "my.ini")
+  });
+  updateKnownService("nginx", {
+    cwd: toSlash(p.nginxRoot),
+    exe: slashJoin(p.nginxRoot, "nginx.exe"),
+    args: ["-p", toSlash(p.nginxRoot), "-c", "conf/nginx.conf"],
+    configFile: slashJoin(p.nginxRoot, "conf", "nginx.conf")
+  });
+  updateKnownService("redis", {
+    cwd: toSlash(p.redisRoot),
+    exe: slashJoin(p.redisRoot, "redis-server.exe"),
+    args: ["redis.conf"],
+    configFile: slashJoin(p.redisRoot, "redis.conf")
+  });
+  updateKnownService("minio", {
+    cwd: toSlash(p.minioRoot),
+    exe: slashJoin(p.minioRoot, "minio.exe"),
+    args: ["server", toSlash(minioData), "--console-address", `:${config.minio.consolePort}`],
+    env: {
+      MINIO_ROOT_USER: config.minio.rootUser,
+      MINIO_ROOT_PASSWORD: config.minio.rootPassword
+    },
+    configFile: slashJoin(p.minioRoot, "minio.env")
+  });
+
+  updateKnownSoftware("apache", {
+    installDir: toSlash(p.apacheRoot),
+    executable: slashJoin(p.apacheRoot, "bin", "httpd.exe")
+  });
+  updateKnownSoftware("nginx", {
+    installDir: toSlash(p.nginxRoot),
+    executable: slashJoin(p.nginxRoot, "nginx.exe")
+  });
+  updateKnownSoftware("mysql80", {
+    installDir: toSlash(p.mysql80Root),
+    executable: slashJoin(p.mysql80Root, "bin", "mysqld.exe")
+  });
+  updateKnownSoftware("mysql57", {
+    installDir: toSlash(p.mysql57Root),
+    executable: slashJoin(p.mysql57Root, "bin", "mysqld.exe")
+  });
+  updateKnownSoftware("redis", {
+    installDir: toSlash(p.redisRoot),
+    executable: slashJoin(p.redisRoot, "redis-server.exe")
+  });
+  updateKnownSoftware("minio", {
+    installDir: toSlash(p.minioRoot),
+    executable: slashJoin(p.minioRoot, "minio.exe")
+  });
+  updateKnownSoftware("mc", {
+    installDir: toSlash(p.minioRoot),
+    executable: slashJoin(p.minioRoot, "mc.exe")
+  });
+  updateKnownSoftware("php73", {
+    installDir: toSlash(p.phpRoot),
+    executable: slashJoin(p.phpRoot, "php-cgi.exe")
+  });
+  updateKnownSoftware("ftp", {
+    installDir: toSlash(p.ftpRoot),
+    executable: slashJoin(p.ftpRoot, "FileZilla Server.exe")
+  });
+
+  updateKnownConfigFile("php.ini", slashJoin(p.phpRoot, "php.ini"));
+  updateKnownConfigFile("httpd.conf", slashJoin(p.apacheRoot, "conf", "httpd.conf"));
+  updateKnownConfigFile("nginx.conf", slashJoin(p.nginxRoot, "conf", "nginx.conf"));
+  updateKnownConfigFile("vhosts.conf", slashJoin(p.apacheRoot, "conf", "vhosts", "0localhost_80.conf"));
+  updateKnownConfigFile("mysql.ini", slashJoin(p.mysql80Root, "my.ini"));
+  updateKnownConfigFile("redis.conf", slashJoin(p.redisRoot, "redis.conf"));
+  updateKnownConfigFile("minio.env", slashJoin(p.minioRoot, "minio.env"));
+  updateKnownConfigFile("hosts", toSlash(HOSTS_PATH));
+}
+
+refreshDerivedPaths();
 
 function saveConfig() {
   writeJson(CONFIG_PATH, config);
@@ -1022,7 +1178,8 @@ function publicSystemSettings() {
     configPath: CONFIG_PATH,
     autostartPath: STARTUP_COMMAND,
     autostartInstalled: STARTUP_COMMAND ? exists(STARTUP_COMMAND) : false,
-    paths: config.paths
+    paths: config.paths,
+    editablePathLabels: EDITABLE_PATH_LABELS
   };
 }
 
@@ -1046,6 +1203,56 @@ function updateSystemSettings(data) {
   config.systemSettings = next;
   saveConfig();
   addLog("系统设置已保存");
+  return publicSystemSettings();
+}
+
+function normalizeEditablePath(value, label) {
+  const clean = String(value || "").trim();
+  if (!clean) throw new Error(`${label} 不能为空`);
+  if (!path.isAbsolute(clean)) throw new Error(`${label} 必须是绝对路径`);
+  return toSlash(path.normalize(clean));
+}
+
+function updatePaths(data) {
+  if (!data || typeof data !== "object") throw new Error("路径设置格式不正确");
+  const next = { ...config.paths };
+  const previous = { ...config.paths };
+  const keys = Object.keys(EDITABLE_PATH_LABELS);
+  const hasEditableKey = keys.some((key) => Object.prototype.hasOwnProperty.call(data, key));
+  if (!hasEditableKey) throw new Error("没有可保存的路径");
+
+  if (Object.prototype.hasOwnProperty.call(data, "phpStudyRoot")) {
+    next.phpStudyRoot = normalizeEditablePath(data.phpStudyRoot, EDITABLE_PATH_LABELS.phpStudyRoot);
+  }
+
+  const phpStudyRootChanged = normalizePathText(previous.phpStudyRoot) !== normalizePathText(next.phpStudyRoot);
+  const previousChildDefaults = phpStudyChildPaths(previous.phpStudyRoot);
+  const nextChildDefaults = phpStudyChildPaths(next.phpStudyRoot);
+  for (const key of keys) {
+    if (key === "phpStudyRoot") continue;
+    if (Object.prototype.hasOwnProperty.call(data, key)) {
+      const clean = normalizeEditablePath(data[key], EDITABLE_PATH_LABELS[key]);
+      const shouldFollowNewRoot = phpStudyRootChanged
+        && Object.prototype.hasOwnProperty.call(PHPSTUDY_CHILD_PATHS, key)
+        && normalizePathText(clean) === normalizePathText(previousChildDefaults[key]);
+      next[key] = shouldFollowNewRoot ? nextChildDefaults[key] : clean;
+    } else if (phpStudyRootChanged && Object.prototype.hasOwnProperty.call(PHPSTUDY_CHILD_PATHS, key)) {
+      next[key] = nextChildDefaults[key];
+    }
+  }
+
+  const minioRootChanged = normalizePathText(previous.minioRoot) !== normalizePathText(next.minioRoot);
+  const currentMinioData = normalizePathText(config.minio.dataDir);
+  const oldMinioRoot = normalizePathText(previous.minioRoot);
+  const oldMinioData = normalizePathText(slashJoin(previous.minioRoot, "data"));
+  if (minioRootChanged && (!currentMinioData || currentMinioData === oldMinioRoot || currentMinioData === oldMinioData)) {
+    config.minio.dataDir = slashJoin(next.minioRoot, "data");
+  }
+
+  config.paths = next;
+  refreshDerivedPaths();
+  addLog("本机路径已保存");
+  saveConfig();
   return publicSystemSettings();
 }
 
@@ -1341,6 +1548,12 @@ async function handleApi(req, res) {
     if (req.method === "POST" && requestUrl.pathname === "/api/settings/system") {
       const body = await readJsonBody(req);
       send(res, 200, { ok: true, message: "系统设置已保存", systemSettings: updateSystemSettings(body) });
+      return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname === "/api/settings/paths") {
+      const body = await readJsonBody(req);
+      send(res, 200, { ok: true, message: "本机路径已保存", systemSettings: updatePaths(body), state: await state() });
       return;
     }
 

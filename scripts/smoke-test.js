@@ -131,6 +131,7 @@ async function main() {
     assert(Array.isArray(state.configFiles), "state.configFiles should be an array");
     assert(state.configFiles.some((item) => item.id === "php.ini"), "php.ini config entry should exist");
     assert(state.systemSettings && state.systemSettings.port === port, "system settings should expose the running port");
+    assert(state.systemSettings.editablePathLabels && state.systemSettings.editablePathLabels.phpStudyRoot, "path setting labels should be exposed");
 
     const homepage = await request(port, "/");
     assert(homepage.statusCode === 200, "homepage should return HTTP 200");
@@ -385,6 +386,43 @@ async function main() {
     const disabledSettings = JSON.parse(settingsOff.body).systemSettings;
     assert(disabledSettings.autostart === false, "autostart should be disabled");
     assert(!fs.existsSync(enabledSettings.autostartPath), "autostart command should be removed");
+
+    const newPhpStudyRoot = path.join(dataDir, "custom_phpstudy");
+    const customRedisRoot = path.join(dataDir, "custom_redis");
+    const pathsUpdate = await request(port, "/api/settings/paths", {
+      method: "POST",
+      body: {
+        phpStudyRoot: newPhpStudyRoot,
+        wwwRoot: path.join(phpStudyRoot, "WWW"),
+        apacheRoot: path.join(phpStudyRoot, "Extensions", "Apache2.4.39"),
+        nginxRoot: path.join(phpStudyRoot, "Extensions", "Nginx1.15.11"),
+        mysql57Root: path.join(phpStudyRoot, "Extensions", "MySQL5.7.26"),
+        mysql80Root: path.join(phpStudyRoot, "Extensions", "MySQL8.0.12"),
+        phpRoot: path.join(phpStudyRoot, "Extensions", "php", "php7.3.4nts"),
+        ftpRoot: path.join(phpStudyRoot, "Extensions", "FTP0.9.60"),
+        redisRoot: customRedisRoot,
+        minioRoot: path.join(dataDir, "custom_minio")
+      }
+    });
+    assert(pathsUpdate.statusCode === 200, "saving local paths should return HTTP 200");
+    const updatedPathsState = JSON.parse(pathsUpdate.body).state;
+    const updatedPaths = updatedPathsState.systemSettings.paths;
+    assert(updatedPaths.phpStudyRoot.replace(/\\/g, "/").endsWith("/custom_phpstudy"), "phpStudy root should be saved");
+    assert(updatedPaths.apacheRoot.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/Apache2.4.39"), "default Apache path should follow a changed phpStudy root");
+    assert(updatedPaths.redisRoot.replace(/\\/g, "/").endsWith("/custom_redis"), "custom Redis path should be saved");
+    const apacheService = updatedPathsState.services.find((item) => item.id === "apache");
+    const redisSoftware = updatedPathsState.software.find((item) => item.id === "redis");
+    const httpdConfig = updatedPathsState.configFiles.find((item) => item.id === "httpd.conf");
+    assert(apacheService.configFile.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/Apache2.4.39/conf/httpd.conf"), "Apache service config path should be refreshed");
+    assert(redisSoftware.executable.replace(/\\/g, "/").endsWith("/custom_redis/redis-server.exe"), "Redis software executable should be refreshed");
+    assert(httpdConfig.path.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/Apache2.4.39/conf/httpd.conf"), "config file path should be refreshed");
+
+    const invalidPathsUpdate = await request(port, "/api/settings/paths", {
+      method: "POST",
+      body: { phpStudyRoot: "relative/phpstudy" }
+    });
+    assert(invalidPathsUpdate.statusCode === 500, "saving relative local paths should fail");
+    assert(invalidPathsUpdate.body.includes("绝对路径"), "invalid path response should explain absolute path requirement");
 
     console.log(`Smoke test passed on http://127.0.0.1:${port}`);
   } finally {

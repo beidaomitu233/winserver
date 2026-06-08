@@ -77,7 +77,8 @@ const systemSettings = {
   configPath: "",
   autostartPath: "",
   autostartInstalled: false,
-  paths: {}
+  paths: {},
+  editablePathLabels: {}
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -489,30 +490,34 @@ function renderSystemSettings() {
 
 function renderFileLocations() {
   const paths = systemSettings.paths || {};
-  const entries = [
-    ["phpStudy 根目录", paths.phpStudyRoot],
-    ["网站根目录", paths.wwwRoot],
-    ["Apache", paths.apacheRoot],
-    ["Nginx", paths.nginxRoot],
-    ["MySQL 5.7", paths.mysql57Root],
-    ["MySQL 8.0", paths.mysql80Root],
-    ["PHP", paths.phpRoot],
-    ["FTP", paths.ftpRoot],
-    ["Redis", paths.redisRoot],
-    ["MinIO", paths.minioRoot]
-  ];
+  const labels = Object.keys(systemSettings.editablePathLabels || {}).length ? systemSettings.editablePathLabels : {
+    phpStudyRoot: "phpStudy 根目录",
+    wwwRoot: "网站根目录",
+    apacheRoot: "Apache",
+    nginxRoot: "Nginx",
+    mysql57Root: "MySQL 5.7",
+    mysql80Root: "MySQL 8.0",
+    phpRoot: "PHP",
+    ftpRoot: "FTP",
+    redisRoot: "Redis",
+    minioRoot: "MinIO"
+  };
+  const entries = Object.entries(labels).map(([key, label]) => [key, label, paths[key] || ""]);
   $("#settingsContent").innerHTML = `
     <div class="config-head">
       <div>
         <p class="config-version">• 文件位置</p>
-        <p class="config-path">这些路径来自当前运行配置，可在 data/config.json 中调整。</p>
+        <p class="config-path">保存后会同步更新服务启动路径、软件安装目录和配置文件路径。</p>
+      </div>
+      <div class="config-actions">
+        <button class="primary" type="button" data-action="save-path-settings">保存</button>
       </div>
     </div>
     <div class="path-list">
-      ${entries.map(([label, value]) => `
+      ${entries.map(([key, label, value]) => `
         <div class="path-row">
-          <span>${escapeHtml(label)}</span>
-          <strong>${escapeHtml(value || "")}</strong>
+          <label for="settingPath-${escapeHtml(key)}">${escapeHtml(label)}</label>
+          <input id="settingPath-${escapeHtml(key)}" data-path-key="${escapeHtml(key)}" type="text" value="${escapeHtml(value)}" />
           <button class="manage-button" type="button" data-open-folder="${escapeHtml(value || "")}" ${value ? "" : "disabled"}>目录</button>
         </div>
       `).join("")}
@@ -935,6 +940,17 @@ function bindEvents() {
         Object.assign(systemSettings, payload);
         addLog("系统设置已保存");
         renderQuickStatus();
+        renderSettings();
+      });
+    }
+    if (quickAction?.dataset.action === "save-path-settings") {
+      const payload = {};
+      $$("[data-path-key]").forEach((input) => {
+        payload[input.dataset.pathKey] = input.value;
+      });
+      await runBackend(() => postApi("/api/settings/paths", payload), () => {
+        systemSettings.paths = { ...(systemSettings.paths || {}), ...payload };
+        addLog("本机路径已保存");
         renderSettings();
       });
     }

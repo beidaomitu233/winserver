@@ -78,7 +78,7 @@ codex/simple-web-manager
 - 数据库：通过本机 `mysql.exe` 创建数据库/账号，支持修改 root 密码、导出 SQL 备份、查看最近备份和移除管理台记录。
 - FTP：创建和编辑本地 FTP 账号记录和目录，支持移除管理台记录。
 - 软件管理：识别本机组件安装状态，支持配置了下载地址的组件安装。
-- 设置：读取和保存 `php.ini`、`httpd.conf`、`nginx.conf`、`my.ini`、`redis.conf`、`hosts` 等配置文件，支持系统设置、开机自启脚本和本机路径查看。
+- 设置：读取和保存 `php.ini`、`httpd.conf`、`nginx.conf`、`my.ini`、`redis.conf`、`hosts` 等配置文件，支持系统设置、开机自启脚本，以及在界面中编辑本机组件路径。
 
 ## 本机数据
 
