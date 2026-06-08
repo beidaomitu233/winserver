@@ -183,6 +183,9 @@ async function main() {
     assert(exported.path.endsWith(".sql"), "database export should return an SQL file path");
     assert(fs.existsSync(exported.path), "database export file should exist");
     assert(fs.readFileSync(exported.path, "utf8").includes("database: root"), "dry-run export should contain the database name");
+    const backups = await request(port, "/api/databases/backups");
+    assert(backups.statusCode === 200, "listing database backups should return HTTP 200");
+    assert(JSON.parse(backups.body).backups.some((item) => item.path === exported.path), "database backup list should include the exported file");
 
     const redisOn = await request(port, "/api/services/redis/auto", {
       method: "POST",

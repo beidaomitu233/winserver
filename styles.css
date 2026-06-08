@@ -521,6 +521,10 @@ button {
   background: #fff;
 }
 
+#view-database .table-wrap {
+  min-height: 420px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -576,6 +580,56 @@ tbody td.path {
   justify-content: center;
   gap: 6px;
   max-width: 100%;
+}
+
+.backup-panel {
+  margin-top: 18px;
+  background: #fff;
+}
+
+.backup-head,
+.backup-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.backup-head {
+  height: 42px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.backup-head h3 {
+  margin: 0;
+  color: #4d5a68;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.backup-list {
+  display: grid;
+}
+
+.backup-row {
+  grid-template-columns: minmax(0, 1fr) 80px auto auto;
+  min-height: 44px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--line);
+  color: #8795a4;
+}
+
+.backup-name {
+  overflow: hidden;
+  color: #566575;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backup-empty {
+  padding: 16px 18px;
+  color: #9aa6b4;
 }
 
 .drop-button {

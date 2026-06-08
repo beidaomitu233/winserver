@@ -30,6 +30,7 @@ const ftpAccounts = [
   { user: "localhost", path: "D:/phpstudy_pro/WWW", permission: "读写", status: "正常" },
   { user: "uploads", path: "D:/phpstudy_pro/uploads", permission: "只写", status: "正常" }
 ];
+const databaseBackups = [];
 
 const softwareTabs = ["全部", "系统环境", "安全", "网站程序", "工具"];
 const categoryTabs = ["全部", "Web Servers", "数据库", "对象存储", "文件服务", "php", "redis", "composer"];
@@ -111,6 +112,7 @@ function applyState(state) {
   replaceArray(services, state.services || []);
   replaceArray(websites, state.websites || []);
   replaceArray(databases, state.databases || []);
+  replaceArray(databaseBackups, state.databaseBackups || []);
   replaceArray(ftpAccounts, state.ftpAccounts || []);
   replaceArray(software, state.software || []);
   replaceArray(configFiles, state.configFiles || configFiles);
@@ -188,6 +190,7 @@ function renderAll() {
   renderLegend();
   renderRows("website");
   renderRows("database");
+  renderBackups();
   renderRows("ftp");
   renderSoftwareTabs();
   renderSoftware();
@@ -315,6 +318,33 @@ function renderRows(kind, query = "") {
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => JSON.stringify(item).toLowerCase().includes(q));
   $(config.target).innerHTML = rows.map(({ item, index }, displayIndex) => `<tr>${config.cells(item, index, displayIndex)}</tr>`).join("");
+}
+
+function formatBytes(size) {
+  const value = Number(size) || 0;
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${value} B`;
+}
+
+function renderBackups() {
+  const list = $("#backupList");
+  if (!list) return;
+  if (!databaseBackups.length) {
+    list.innerHTML = '<div class="backup-empty">暂无备份</div>';
+    return;
+  }
+  list.innerHTML = databaseBackups
+    .slice(0, 6)
+    .map((item) => `
+      <div class="backup-row">
+        <span class="backup-name" title="${escapeHtml(item.path)}">${escapeHtml(item.name)}</span>
+        <span>${formatBytes(item.size)}</span>
+        <button class="manage-button" type="button" data-open-file="${escapeHtml(item.path)}">打开</button>
+        <button class="manage-button" type="button" data-open-folder="${escapeHtml(item.path.replace(/[/\\\\][^/\\\\]+$/, ""))}">目录</button>
+      </div>
+    `)
+    .join("");
 }
 
 function renderSoftwareTabs() {
@@ -784,6 +814,17 @@ function bindEvents() {
       renderSoftwareTabs();
       renderSoftware();
     }
+    if (quickAction?.dataset.action === "refresh-backups") {
+      if (canUseBackend) {
+        await runBackend(async () => {
+          const data = await api("/api/databases/backups");
+          replaceArray(databaseBackups, data.backups || []);
+          renderBackups();
+        });
+      } else {
+        renderBackups();
+      }
+    }
 
     const swTab = event.target.closest("[data-software-tab]");
     if (swTab) {
@@ -879,6 +920,7 @@ function init() {
   renderLegend();
   renderRows("website");
   renderRows("database");
+  renderBackups();
   renderRows("ftp");
   renderSoftwareTabs();
   renderSoftware();

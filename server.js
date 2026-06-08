@@ -786,6 +786,25 @@ async function exportDatabase(indexValue) {
   return { message, path: toSlash(filePath) };
 }
 
+function listDatabaseBackups() {
+  const backupsDir = path.join(DATA_DIR, "backups");
+  if (!exists(backupsDir)) return [];
+  return fs.readdirSync(backupsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".sql"))
+    .map((entry) => {
+      const filePath = path.join(backupsDir, entry.name);
+      const stat = fs.statSync(filePath);
+      return {
+        name: entry.name,
+        path: toSlash(filePath),
+        size: stat.size,
+        modifiedAt: stat.mtime.toISOString()
+      };
+    })
+    .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt))
+    .slice(0, 50);
+}
+
 function createFtpAccount(data) {
   const account = {
     user: String(data.user || "").trim(),
@@ -1073,6 +1092,7 @@ async function state() {
     services,
     websites: config.sites,
     databases: config.databases,
+    databaseBackups: listDatabaseBackups(),
     ftpAccounts: config.ftpAccounts,
     software: config.software.map(publicSoftware),
     configFiles: config.configFiles.map((item) => ({ id: item.id, label: item.label, path: item.path, exists: exists(item.path) })),
@@ -1191,6 +1211,11 @@ async function handleApi(req, res) {
     if (req.method === "POST" && requestUrl.pathname === "/api/databases") {
       const body = await readJsonBody(req);
       send(res, 200, { ok: true, database: await createDatabase(body), state: await state() });
+      return;
+    }
+
+    if (req.method === "GET" && requestUrl.pathname === "/api/databases/backups") {
+      send(res, 200, { backups: listDatabaseBackups() });
       return;
     }
 
