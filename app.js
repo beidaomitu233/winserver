@@ -198,13 +198,20 @@ function renderAll() {
   renderSettings();
 }
 
+function autoServices(items = services) {
+  return items.filter((item) => item.auto);
+}
+
+function suiteRunning(items = services) {
+  return autoServices(items).some((item) => item.running);
+}
+
 function renderQuickStatus() {
   const suiteButton = $('[data-action="suite-toggle"]');
   const suiteDot = suiteButton?.parentElement.querySelector(".status-dot");
   const autostartButton = $('[data-action="autostart-toggle"]');
   const autostartDot = autostartButton?.parentElement.querySelector(".status-dot");
-  const autoServices = services.filter((item) => item.auto);
-  const anyRunning = autoServices.some((item) => item.running);
+  const anyRunning = suiteRunning();
   if (suiteButton) suiteButton.textContent = anyRunning ? "停止" : "启动";
   if (suiteDot) {
     suiteDot.classList.toggle("running", anyRunning);
@@ -791,11 +798,11 @@ function bindEvents() {
 
     const quickAction = event.target.closest("[data-action]");
     if (quickAction?.dataset.action === "suite-toggle") {
-      const anyRunning = services.some((item) => item.running);
+      const anyRunning = suiteRunning();
       if (canUseBackend) {
         await runBackend(() => postApi(`/api/suite/${anyRunning ? "stop" : "start"}`));
       } else {
-        services.forEach((item) => {
+        autoServices().forEach((item) => {
           item.running = !anyRunning;
         });
         quickAction.textContent = anyRunning ? "启动" : "停止";
