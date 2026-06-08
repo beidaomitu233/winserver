@@ -1052,15 +1052,16 @@ function saveConfigFile(id, content) {
 
 function openFolder(folderPath) {
   if (!folderPath) throw new Error("目录路径不能为空");
-  ensureDir(folderPath);
+  if (!exists(folderPath) || !fs.statSync(folderPath).isDirectory()) throw new Error(`目录不存在：${folderPath}`);
+  if (SERVICE_DRY_RUN) return `已验证目录：${folderPath}`;
   spawn("explorer.exe", [folderPath], { detached: true, stdio: "ignore", windowsHide: true }).unref();
   return `已打开目录：${folderPath}`;
 }
 
 function openFile(filePath) {
   if (!filePath) throw new Error("文件路径不能为空");
-  ensureDir(path.dirname(filePath));
-  if (!exists(filePath)) fs.writeFileSync(filePath, "", "utf8");
+  if (!exists(filePath) || !fs.statSync(filePath).isFile()) throw new Error(`文件不存在：${filePath}`);
+  if (SERVICE_DRY_RUN) return `已验证文件：${filePath}`;
   spawn("notepad.exe", [filePath], { detached: true, stdio: "ignore", windowsHide: true }).unref();
   return `已打开文件：${filePath}`;
 }

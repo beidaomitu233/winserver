@@ -209,6 +209,38 @@ async function main() {
     const deleteFtp = await request(port, `/api/ftp/${ftpIndex}`, { method: "DELETE" });
     assert(deleteFtp.statusCode === 200, "removing an FTP record should return HTTP 200");
 
+    const openExistingFolder = await request(port, "/api/open/folder", {
+      method: "POST",
+      body: { path: editedFtpPath }
+    });
+    assert(openExistingFolder.statusCode === 200, "opening an existing folder should return HTTP 200 in dry-run mode");
+    assert(JSON.parse(openExistingFolder.body).message.includes("已验证目录"), "dry-run folder open should validate the folder");
+
+    const missingFolderPath = path.join(dataDir, "missing-folder");
+    const openMissingFolder = await request(port, "/api/open/folder", {
+      method: "POST",
+      body: { path: missingFolderPath }
+    });
+    assert(openMissingFolder.statusCode === 500, "opening a missing folder should fail");
+    assert(!fs.existsSync(missingFolderPath), "opening a missing folder should not create it");
+
+    const existingFilePath = path.join(dataDir, "open-file.txt");
+    fs.writeFileSync(existingFilePath, "open file smoke", "utf8");
+    const openExistingFile = await request(port, "/api/open/file", {
+      method: "POST",
+      body: { path: existingFilePath }
+    });
+    assert(openExistingFile.statusCode === 200, "opening an existing file should return HTTP 200 in dry-run mode");
+    assert(JSON.parse(openExistingFile.body).message.includes("已验证文件"), "dry-run file open should validate the file");
+
+    const missingFilePath = path.join(dataDir, "missing-file.txt");
+    const openMissingFile = await request(port, "/api/open/file", {
+      method: "POST",
+      body: { path: missingFilePath }
+    });
+    assert(openMissingFile.statusCode === 500, "opening a missing file should fail");
+    assert(!fs.existsSync(missingFilePath), "opening a missing file should not create it");
+
     const deleteRoot = await request(port, "/api/databases/0", { method: "DELETE" });
     assert(deleteRoot.statusCode === 500, "root database record should be protected");
     assert(deleteRoot.body.includes("root"), "root protection response should mention root");
