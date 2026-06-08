@@ -97,10 +97,23 @@ async function main() {
   const phpStudyRoot = path.join(dataDir, "phpstudy_pro");
   const apacheVhostsDir = path.join(phpStudyRoot, "Extensions", "Apache2.4.39", "conf", "vhosts");
   const nginxVhostsDir = path.join(phpStudyRoot, "Extensions", "Nginx1.15.11", "conf", "vhosts");
+  const ftpRoot = path.join(phpStudyRoot, "Extensions", "FTP0.9.60");
+  const ftpConfigPath = path.join(ftpRoot, "FileZilla Server.xml");
   const hostsPath = path.join(dataDir, "hosts");
   fs.mkdirSync(apacheVhostsDir, { recursive: true });
   fs.mkdirSync(nginxVhostsDir, { recursive: true });
+  fs.mkdirSync(ftpRoot, { recursive: true });
   fs.writeFileSync(path.join(apacheVhostsDir, "Listen.conf"), "Listen 80\n", "utf8");
+  fs.writeFileSync(ftpConfigPath, [
+    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\" ?>",
+    "<FileZillaServer>",
+    "  <Settings />",
+    "  <Users>",
+    "    <User Name=\"manual_user\"><Option Name=\"Comments\">keep me</Option></User>",
+    "  </Users>",
+    "</FileZillaServer>",
+    ""
+  ].join(os.EOL), "utf8");
   fs.writeFileSync(hostsPath, "127.0.0.1 localhost\n", "utf8");
   const logs = [];
   const child = spawn(process.execPath, ["server.js"], {
@@ -259,6 +272,11 @@ async function main() {
     const ftpState = JSON.parse(createFtp.body).state;
     const ftpIndex = ftpState.ftpAccounts.findIndex((item) => item.user === "smoke_ftp");
     assert(ftpIndex >= 0, "created FTP record should appear in state");
+    const ftpConfigAfterCreate = fs.readFileSync(ftpConfigPath, "utf8");
+    assert(ftpConfigAfterCreate.includes("XP.CN managed account: smoke_ftp"), "created FTP account should be synced to FileZilla config");
+    assert(ftpConfigAfterCreate.includes(`Permission Dir="${path.join(dataDir, "ftp").replace(/\\/g, "/")}"`), "created FTP account should sync the configured directory");
+    assert(ftpConfigAfterCreate.includes('<Option Name="FileWrite">1</Option>'), "read-write FTP account should allow file writes");
+    assert(ftpConfigAfterCreate.includes("manual_user"), "syncing FTP accounts should preserve unmanaged FileZilla users");
 
     const duplicateFtp = await request(port, "/api/ftp", {
       method: "POST",
@@ -275,6 +293,13 @@ async function main() {
     const secondFtpState = JSON.parse(secondFtp.body).state;
     const secondFtpIndex = secondFtpState.ftpAccounts.findIndex((item) => item.user === "smoke_ftp_second");
     assert(secondFtpIndex >= 0, "second FTP record should appear in state");
+
+    const invalidFtpUser = await request(port, "/api/ftp", {
+      method: "POST",
+      body: { user: "bad user", path: path.join(dataDir, "ftp-invalid"), permission: "读写" }
+    });
+    assert(invalidFtpUser.statusCode === 500, "creating FTP with an invalid user should fail");
+    assert(invalidFtpUser.body.includes("只能包含"), "invalid FTP user response should explain the allowed characters");
 
     const conflictingFtpEdit = await request(port, `/api/ftp/${secondFtpIndex}`, {
       method: "PUT",
@@ -296,9 +321,16 @@ async function main() {
     assert(updatedFtp.user === "smoke_ftp_edited", "edited FTP user should be saved");
     assert(updatedFtp.permission === "只读", "edited FTP permission should be saved");
     assert(fs.existsSync(editedFtpPath), "edited FTP directory should be created");
+    const ftpConfigAfterEdit = fs.readFileSync(ftpConfigPath, "utf8");
+    assert(!ftpConfigAfterEdit.includes("XP.CN managed account: smoke_ftp<"), "editing FTP user should remove the old managed user block");
+    assert(ftpConfigAfterEdit.includes("XP.CN managed account: smoke_ftp_edited"), "editing FTP user should sync the new managed user block");
+    assert(ftpConfigAfterEdit.includes('<Option Name="FileWrite">0</Option>'), "read-only FTP account should disable file writes");
 
     const deleteFtp = await request(port, `/api/ftp/${ftpIndex}`, { method: "DELETE" });
     assert(deleteFtp.statusCode === 200, "removing an FTP record should return HTTP 200");
+    const ftpConfigAfterDelete = fs.readFileSync(ftpConfigPath, "utf8");
+    assert(!ftpConfigAfterDelete.includes("XP.CN managed account: smoke_ftp_edited"), "removing FTP should clean the managed FileZilla user");
+    assert(ftpConfigAfterDelete.includes("manual_user"), "removing FTP should preserve unmanaged FileZilla users");
 
     const openExistingFolder = await request(port, "/api/open/folder", {
       method: "POST",

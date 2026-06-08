@@ -1140,6 +1140,128 @@ function assertUniqueFtpAccount(account, exceptIndex = -1) {
   }
 }
 
+function assertValidFtpUser(user) {
+  if (!user) throw new Error("FTP 用户名不能为空");
+  if (!/^[a-zA-Z0-9._-]{1,64}$/.test(user)) throw new Error("FTP 用户名只能包含字母、数字、点、下划线和短横线");
+}
+
+function escapeXml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function ftpConfigPath() {
+  const service = serviceById("ftp");
+  return service?.configFile || slashJoin(config.paths.ftpRoot, "FileZilla Server.xml");
+}
+
+function ftpPermissionValue(permission) {
+  const text = String(permission || "读写");
+  const canWrite = text.includes("写");
+  const canRead = !text.includes("只写");
+  return {
+    read: canRead ? "1" : "0",
+    write: canWrite ? "1" : "0",
+    delete: canWrite ? "1" : "0",
+    append: canWrite ? "1" : "0",
+    create: canWrite ? "1" : "0",
+    list: "1",
+    subdirs: "1"
+  };
+}
+
+function ftpUserXml(account) {
+  const permission = ftpPermissionValue(account.permission);
+  const home = toSlash(account.path);
+  return [
+    `  <!-- XP.CN managed account: ${escapeXml(account.user)} -->`,
+    `  <User Name="${escapeXml(account.user)}">`,
+    "    <Option Name=\"Pass\"></Option>",
+    "    <Option Name=\"Group\"></Option>",
+    "    <Option Name=\"Bypass server userlimit\">0</Option>",
+    "    <Option Name=\"User Limit\">0</Option>",
+    "    <Option Name=\"IP Limit\">0</Option>",
+    "    <Option Name=\"Enabled\">1</Option>",
+    "    <Option Name=\"Comments\">Managed by XP.CN local manager</Option>",
+    "    <Option Name=\"ForceSsl\">0</Option>",
+    "    <IpFilter>",
+    "      <Disallowed />",
+    "      <Allowed />",
+    "    </IpFilter>",
+    "    <Permissions>",
+    `      <Permission Dir="${escapeXml(home)}">`,
+    `        <Option Name="FileRead">${permission.read}</Option>`,
+    `        <Option Name="FileWrite">${permission.write}</Option>`,
+    `        <Option Name="FileDelete">${permission.delete}</Option>`,
+    `        <Option Name="FileAppend">${permission.append}</Option>`,
+    `        <Option Name="DirCreate">${permission.create}</Option>`,
+    `        <Option Name="DirDelete">${permission.delete}</Option>`,
+    `        <Option Name="DirList">${permission.list}</Option>`,
+    `        <Option Name="DirSubdirs">${permission.subdirs}</Option>`,
+    "        <Option Name=\"IsHome\">1</Option>",
+    "        <Option Name=\"AutoCreate\">1</Option>",
+    "      </Permission>",
+    "    </Permissions>",
+    "  </User>"
+  ].join(os.EOL);
+}
+
+function defaultFtpConfigXml() {
+  return [
+    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\" ?>",
+    "<FileZillaServer>",
+    "  <Settings />",
+    "  <Groups />",
+    "  <Users>",
+    "  </Users>",
+    "</FileZillaServer>",
+    ""
+  ].join(os.EOL);
+}
+
+function removeManagedFtpUser(xml, user) {
+  const escaped = String(user || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`\\s*<!-- XP\\.CN managed account: ${escaped} -->\\s*<User\\b[^>]*>[\\s\\S]*?<\\/User>`, "g");
+  return xml.replace(pattern, "");
+}
+
+function upsertFtpUserXml(xml, account) {
+  let next = removeManagedFtpUser(xml, account.user);
+  const userXml = ftpUserXml(account);
+  if (/<Users\b[^>]*>[\s\S]*?<\/Users>/.test(next)) {
+    return next.replace(/<\/Users>/, `${userXml}${os.EOL}  </Users>`);
+  }
+  if (/<FileZillaServer\b[^>]*>/.test(next)) {
+    return next.replace(/<\/FileZillaServer>/, `  <Users>${os.EOL}${userXml}${os.EOL}  </Users>${os.EOL}</FileZillaServer>`);
+  }
+  return defaultFtpConfigXml().replace(/<\/Users>/, `${userXml}${os.EOL}  </Users>`);
+}
+
+function writeFtpConfigXml(xml) {
+  const filePath = ftpConfigPath();
+  ensureDir(path.dirname(filePath));
+  if (exists(filePath)) backupFile(filePath);
+  fs.writeFileSync(filePath, xml, "utf8");
+}
+
+function syncFtpConfig(account, previousUser = "") {
+  const filePath = ftpConfigPath();
+  const current = exists(filePath) ? fs.readFileSync(filePath, "utf8") : defaultFtpConfigXml();
+  const withoutPrevious = previousUser && previousUser !== account.user ? removeManagedFtpUser(current, previousUser) : current;
+  writeFtpConfigXml(upsertFtpUserXml(withoutPrevious, account));
+}
+
+function removeFtpConfigUser(account) {
+  if (!account) return;
+  const filePath = ftpConfigPath();
+  if (!exists(filePath)) return;
+  writeFtpConfigXml(removeManagedFtpUser(fs.readFileSync(filePath, "utf8"), account.user));
+}
+
 function createFtpAccount(data) {
   const account = {
     user: String(data.user || "").trim(),
@@ -1147,9 +1269,10 @@ function createFtpAccount(data) {
     permission: String(data.permission || "读写"),
     status: "正常"
   };
-  if (!account.user) throw new Error("FTP 用户名不能为空");
+  assertValidFtpUser(account.user);
   assertUniqueFtpAccount(account);
   ensureDir(account.path);
+  syncFtpConfig(account);
   config.ftpAccounts.push(account);
   addLog(`FTP账号 ${account.user} 已创建`);
   saveConfig();
@@ -1168,9 +1291,10 @@ function updateFtpAccount(indexValue, data) {
     permission: String(data.permission || config.ftpAccounts[index].permission || "读写"),
     status: data.status || config.ftpAccounts[index].status || "正常"
   };
-  if (!account.user) throw new Error("FTP 用户名不能为空");
+  assertValidFtpUser(account.user);
   assertUniqueFtpAccount(account, index);
   ensureDir(account.path);
+  syncFtpConfig(account, config.ftpAccounts[index].user);
   config.ftpAccounts[index] = account;
   addLog(`FTP账号 ${account.user} 已更新`);
   saveConfig();
@@ -1300,7 +1424,10 @@ function removeRecord(kind, indexValue) {
     ftp: {
       label: "FTP账号",
       items: config.ftpAccounts,
-      describe: (item) => item.user
+      describe: (item) => item.user,
+      afterRemove: (item) => {
+        removeFtpConfigUser(item);
+      }
     }
   };
   const collection = collections[kind];

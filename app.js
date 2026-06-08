@@ -351,7 +351,7 @@ function renderRows(kind, query = "") {
         <td><div class="row-actions">
           <button class="manage-button" type="button" data-open-folder="${escapeHtml(item.path)}">目录</button>
           <button class="manage-button" type="button" data-edit-record="ftp" data-record-index="${index}">编辑</button>
-          <button class="manage-button" type="button" data-row-note="FTP 账号 ${escapeHtml(item.user)} 已记录在本地配置中。需要真实 FileZilla 用户同步时，可继续接入 FileZilla Server 配置写入。">说明</button>
+          <button class="manage-button" type="button" data-row-note="FTP 账号 ${escapeHtml(item.user)} 已同步到 FileZilla Server.xml。移除记录时只会清理 XP.CN 托管的账号配置，不会删除本机目录。">说明</button>
           <button class="manage-button danger" type="button" data-remove-record="ftp" data-record-index="${index}" data-record-label="${escapeHtml(item.user)}">移除</button>
         </div></td>
       `
@@ -587,6 +587,17 @@ function field(label, name, value = "", type = "text") {
   `;
 }
 
+function selectField(label, name, value = "", options = []) {
+  return `
+    <div class="field">
+      <label for="${name}">${label}</label>
+      <select id="${name}" name="${name}" required>
+        ${options.map((option) => `<option value="${escapeHtml(option)}" ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+      </select>
+    </div>
+  `;
+}
+
 function openModal(type, title = "", initial = {}, index = -1) {
   modalType = type;
   modalIndex = index;
@@ -608,11 +619,11 @@ function openModal(type, title = "", initial = {}, index = -1) {
     },
     ftp: {
       title: "创建FTP",
-      html: field("用户名", "user", initial.user || "demo_ftp") + field("根目录", "path", initial.path || "D:/phpstudy_pro/WWW/demo") + field("权限", "permission", initial.permission || "读写")
+      html: field("用户名", "user", initial.user || "demo_ftp") + field("根目录", "path", initial.path || "D:/phpstudy_pro/WWW/demo") + selectField("权限", "permission", initial.permission || "读写", ["读写", "只读", "只写"])
     },
     "ftp-edit": {
       title: "编辑FTP",
-      html: field("用户名", "user", initial.user || "") + field("根目录", "path", initial.path || "") + field("权限", "permission", initial.permission || "读写")
+      html: field("用户名", "user", initial.user || "") + field("根目录", "path", initial.path || "") + selectField("权限", "permission", initial.permission || "读写", ["读写", "只读", "只写"])
     },
     root: {
       title: "修改root密码",
