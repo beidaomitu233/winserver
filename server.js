@@ -152,7 +152,7 @@ function defaultConfig() {
       {
         id: "mysql80",
         name: "MySQL8.0.12",
-        type: "triangle",
+        type: "square",
         processName: "mysqld.exe",
         port: 3306,
         cwd: toSlash(p.mysql80Root),
@@ -415,13 +415,17 @@ function publicService(service, running) {
   return {
     id: service.id,
     name: service.name,
-    type: running ? "triangle" : service.type,
+    type: running ? "triangle" : "square",
     running,
     auto: !!service.auto,
     port: service.port,
     configFile: service.configFile,
     installed: exists(service.exe)
   };
+}
+
+function normalizePathText(value) {
+  return toSlash(value).toLowerCase();
 }
 
 function publicSoftware(item) {
@@ -470,10 +474,32 @@ async function taskRunning(processName) {
   }
 }
 
+async function processMatchesExecutable(service) {
+  if (!service.processName || !service.exe || !exists(service.exe)) return false;
+  try {
+    const { stdout } = await execFileAsync("wmic.exe", [
+      "process",
+      "where",
+      `name='${service.processName.replace(/'/g, "''")}'`,
+      "get",
+      "ExecutablePath,CommandLine",
+      "/format:csv"
+    ]);
+    const expected = normalizePathText(service.exe);
+    return stdout
+      .split(/\r?\n/)
+      .some((line) => normalizePathText(line).includes(expected));
+  } catch {
+    return false;
+  }
+}
+
 async function serviceRunning(service) {
   if (SERVICE_DRY_RUN) return false;
-  if (await portOpen(service.port)) return true;
-  return taskRunning(service.processName);
+  if (await processMatchesExecutable(service)) return true;
+  if (exists(service.exe)) return false;
+  if (await taskRunning(service.processName)) return true;
+  return portOpen(service.port);
 }
 
 function assertInstalled(service) {

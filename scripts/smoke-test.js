@@ -115,6 +115,8 @@ async function main() {
   try {
     const state = await waitForState(port, child, output);
     assert(Array.isArray(state.services), "state.services should be an array");
+    assert(state.services.every((service) => service.running === false), "dry-run state should not detect real local processes");
+    assert(state.services.every((service) => service.type === "square"), "stopped services should render as square");
     assert(Array.isArray(state.software), "state.software should be an array");
     assert(Array.isArray(state.configFiles), "state.configFiles should be an array");
     assert(state.configFiles.some((item) => item.id === "php.ini"), "php.ini config entry should exist");

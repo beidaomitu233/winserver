@@ -2,7 +2,7 @@ const services = [
   { name: "Apache2.4.39", type: "square", running: false, auto: true },
   { name: "FTP0.9.60", type: "square", running: false, auto: true },
   { name: "MySQL5.7.26", type: "square", running: false, auto: true },
-  { name: "MySQL8.0.12", type: "triangle", running: true, auto: true },
+  { name: "MySQL8.0.12", type: "square", running: false, auto: true },
   { name: "Nginx1.15.11", type: "square", running: false, auto: true },
   { name: "Redis7.2.4", type: "square", running: false, auto: false },
   { name: "MinIO2025.04", type: "square", running: false, auto: false }
@@ -231,7 +231,7 @@ function renderServices() {
   const list = $("#serviceList");
   list.innerHTML = services
     .map((service, index) => {
-      const shape = service.running ? "triangle" : service.type;
+      const shape = service.running ? "triangle" : "square";
       const shapeClass = shape === "triangle" ? "shape-triangle" : "shape-square";
       const disabled = service.running ? "" : " disabled";
       const missing = service.installed === false ? " service-missing" : "";
