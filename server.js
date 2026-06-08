@@ -85,6 +85,7 @@ function detectPaths() {
     ftpRoot: path.join(ext, "FTP0.9.60"),
     mysql57Root: path.join(ext, "MySQL5.7.26"),
     mysql80Root: path.join(ext, "MySQL8.0.12"),
+    mariadbRoot: path.join(ext, "MariaDB10.11"),
     phpRoot: path.join(ext, "php", "php7.3.4nts"),
     redisRoot,
     minioRoot,
@@ -99,6 +100,7 @@ const EDITABLE_PATH_LABELS = {
   nginxRoot: "Nginx",
   mysql57Root: "MySQL 5.7",
   mysql80Root: "MySQL 8.0",
+  mariadbRoot: "MariaDB",
   phpRoot: "PHP",
   ftpRoot: "FTP",
   redisRoot: "Redis",
@@ -111,6 +113,7 @@ const PHPSTUDY_CHILD_PATHS = {
   nginxRoot: ["Extensions", "Nginx1.15.11"],
   mysql57Root: ["Extensions", "MySQL5.7.26"],
   mysql80Root: ["Extensions", "MySQL8.0.12"],
+  mariadbRoot: ["Extensions", "MariaDB10.11"],
   phpRoot: ["Extensions", "php", "php7.3.4nts"],
   ftpRoot: ["Extensions", "FTP0.9.60"]
 };
@@ -121,6 +124,15 @@ function slashJoin(...parts) {
 
 function phpStudyChildPaths(root) {
   return Object.fromEntries(Object.entries(PHPSTUDY_CHILD_PATHS).map(([key, segments]) => [key, slashJoin(root, ...segments)]));
+}
+
+function mergeArrayById(baseItems, savedItems) {
+  if (!Array.isArray(savedItems)) return baseItems;
+  const merged = [...savedItems];
+  for (const item of baseItems) {
+    if (item?.id && !merged.some((saved) => saved?.id === item.id)) merged.push(item);
+  }
+  return merged;
 }
 
 function defaultConfig() {
@@ -193,6 +205,19 @@ function defaultConfig() {
         clientExe: toSlash(path.join(p.mysql80Root, "bin", "mysql.exe")),
         configFile: toSlash(path.join(p.mysql80Root, "my.ini")),
         auto: true
+      },
+      {
+        id: "mariadb",
+        name: "MariaDB10.11",
+        type: "square",
+        processName: "mysqld.exe",
+        port: 3308,
+        cwd: toSlash(p.mariadbRoot),
+        exe: toSlash(path.join(p.mariadbRoot, "bin", "mysqld.exe")),
+        args: [`--defaults-file=${toSlash(path.join(p.mariadbRoot, "my.ini"))}`],
+        clientExe: toSlash(path.join(p.mariadbRoot, "bin", "mysql.exe")),
+        configFile: toSlash(path.join(p.mariadbRoot, "my.ini")),
+        auto: false
       },
       {
         id: "nginx",
@@ -312,6 +337,19 @@ function defaultConfig() {
         postInstall: "redis-nuget"
       },
       {
+        id: "mariadb",
+        name: "MariaDB10.11",
+        category: "数据库",
+        group: "系统环境",
+        desc: "MariaDB 数据库服务",
+        icon: "db",
+        serviceId: "mariadb",
+        installDir: toSlash(p.mariadbRoot),
+        executable: toSlash(path.join(p.mariadbRoot, "bin", "mysqld.exe")),
+        downloadUrl: "https://archive.mariadb.org/mariadb-10.11.8/winx64-packages/mariadb-10.11.8-winx64.zip",
+        archiveRoot: true
+      },
+      {
         id: "minio",
         name: "MinIO",
         category: "对象存储",
@@ -370,6 +408,7 @@ function defaultConfig() {
       { id: "nginx.conf", label: "nginx.conf", path: toSlash(path.join(p.nginxRoot, "conf", "nginx.conf")) },
       { id: "vhosts.conf", label: "vhosts.conf", path: toSlash(path.join(p.apacheRoot, "conf", "vhosts", "0localhost_80.conf")) },
       { id: "mysql.ini", label: "mysql.ini", path: toSlash(path.join(p.mysql80Root, "my.ini")) },
+      { id: "mariadb.ini", label: "mariadb.ini", path: toSlash(path.join(p.mariadbRoot, "my.ini")) },
       { id: "redis.conf", label: "redis.conf", path: toSlash(path.join(p.redisRoot, "redis.conf")) },
       { id: "minio.env", label: "minio.env", path: toSlash(path.join(p.minioRoot, "minio.env")) },
       { id: "hosts", label: "hosts", path: toSlash(HOSTS_PATH) }
@@ -386,12 +425,12 @@ function mergeConfig(base, saved) {
     paths: { ...base.paths, ...(saved.paths || {}) },
     minio: { ...base.minio, ...(saved.minio || {}) },
     systemSettings: { ...base.systemSettings, ...(saved.systemSettings || {}) },
-    services: Array.isArray(saved.services) ? saved.services : base.services,
+    services: mergeArrayById(base.services, saved.services),
     sites: Array.isArray(saved.sites) ? saved.sites : base.sites,
     databases: Array.isArray(saved.databases) ? saved.databases : base.databases,
     ftpAccounts: Array.isArray(saved.ftpAccounts) ? saved.ftpAccounts : base.ftpAccounts,
-    software: Array.isArray(saved.software) ? saved.software : base.software,
-    configFiles: Array.isArray(saved.configFiles) ? saved.configFiles : base.configFiles,
+    software: mergeArrayById(base.software, saved.software),
+    configFiles: mergeArrayById(base.configFiles, saved.configFiles),
     logs: Array.isArray(saved.logs) ? saved.logs : []
   };
   if (PORT_OVERRIDE) merged.port = DEFAULT_PORT;
@@ -463,6 +502,13 @@ function refreshDerivedPaths() {
     clientExe: slashJoin(p.mysql80Root, "bin", "mysql.exe"),
     configFile: slashJoin(p.mysql80Root, "my.ini")
   });
+  updateKnownService("mariadb", {
+    cwd: toSlash(p.mariadbRoot),
+    exe: slashJoin(p.mariadbRoot, "bin", "mysqld.exe"),
+    args: [`--defaults-file=${slashJoin(p.mariadbRoot, "my.ini")}`],
+    clientExe: slashJoin(p.mariadbRoot, "bin", "mysql.exe"),
+    configFile: slashJoin(p.mariadbRoot, "my.ini")
+  });
   updateKnownService("nginx", {
     cwd: toSlash(p.nginxRoot),
     exe: slashJoin(p.nginxRoot, "nginx.exe"),
@@ -502,6 +548,10 @@ function refreshDerivedPaths() {
     installDir: toSlash(p.mysql57Root),
     executable: slashJoin(p.mysql57Root, "bin", "mysqld.exe")
   });
+  updateKnownSoftware("mariadb", {
+    installDir: toSlash(p.mariadbRoot),
+    executable: slashJoin(p.mariadbRoot, "bin", "mysqld.exe")
+  });
   updateKnownSoftware("redis", {
     installDir: toSlash(p.redisRoot),
     executable: slashJoin(p.redisRoot, "redis-server.exe")
@@ -528,6 +578,7 @@ function refreshDerivedPaths() {
   updateKnownConfigFile("nginx.conf", slashJoin(p.nginxRoot, "conf", "nginx.conf"));
   updateKnownConfigFile("vhosts.conf", slashJoin(p.apacheRoot, "conf", "vhosts", "0localhost_80.conf"));
   updateKnownConfigFile("mysql.ini", slashJoin(p.mysql80Root, "my.ini"));
+  updateKnownConfigFile("mariadb.ini", slashJoin(p.mariadbRoot, "my.ini"));
   updateKnownConfigFile("redis.conf", slashJoin(p.redisRoot, "redis.conf"));
   updateKnownConfigFile("minio.env", slashJoin(p.minioRoot, "minio.env"));
   updateKnownConfigFile("hosts", toSlash(HOSTS_PATH));
@@ -1019,7 +1070,10 @@ function mysqlArgs(service, sql, passwordOverride) {
 }
 
 function mysqlService() {
-  return config.services.find((item) => item.id === "mysql80") || config.services.find((item) => item.clientExe);
+  const preferred = ["mysql80", "mariadb", "mysql57"]
+    .map((id) => config.services.find((item) => item.id === id))
+    .find((item) => item?.clientExe && exists(item.clientExe));
+  return preferred || config.services.find((item) => item.clientExe);
 }
 
 function sqlIdent(value) {

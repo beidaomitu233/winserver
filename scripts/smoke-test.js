@@ -140,11 +140,15 @@ async function main() {
     assert(Array.isArray(state.services), "state.services should be an array");
     assert(state.services.every((service) => service.running === false), "dry-run state should not detect real local processes");
     assert(state.services.every((service) => service.type === "square"), "stopped services should render as square");
+    assert(state.services.some((service) => service.id === "mariadb"), "MariaDB service should be exposed");
     assert(Array.isArray(state.software), "state.software should be an array");
+    assert(state.software.some((item) => item.id === "mariadb"), "MariaDB software should be exposed");
     assert(Array.isArray(state.configFiles), "state.configFiles should be an array");
     assert(state.configFiles.some((item) => item.id === "php.ini"), "php.ini config entry should exist");
+    assert(state.configFiles.some((item) => item.id === "mariadb.ini"), "MariaDB config entry should exist");
     assert(state.systemSettings && state.systemSettings.port === port, "system settings should expose the running port");
     assert(state.systemSettings.editablePathLabels && state.systemSettings.editablePathLabels.phpStudyRoot, "path setting labels should be exposed");
+    assert(state.systemSettings.editablePathLabels.mariadbRoot, "MariaDB path setting label should be exposed");
 
     const homepage = await request(port, "/");
     assert(homepage.statusCode === 200, "homepage should return HTTP 200");
@@ -445,6 +449,7 @@ async function main() {
         nginxRoot: path.join(phpStudyRoot, "Extensions", "Nginx1.15.11"),
         mysql57Root: path.join(phpStudyRoot, "Extensions", "MySQL5.7.26"),
         mysql80Root: path.join(phpStudyRoot, "Extensions", "MySQL8.0.12"),
+        mariadbRoot: path.join(phpStudyRoot, "Extensions", "MariaDB10.11"),
         phpRoot: path.join(phpStudyRoot, "Extensions", "php", "php7.3.4nts"),
         ftpRoot: path.join(phpStudyRoot, "Extensions", "FTP0.9.60"),
         redisRoot: customRedisRoot,
@@ -456,13 +461,20 @@ async function main() {
     const updatedPaths = updatedPathsState.systemSettings.paths;
     assert(updatedPaths.phpStudyRoot.replace(/\\/g, "/").endsWith("/custom_phpstudy"), "phpStudy root should be saved");
     assert(updatedPaths.apacheRoot.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/Apache2.4.39"), "default Apache path should follow a changed phpStudy root");
+    assert(updatedPaths.mariadbRoot.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/MariaDB10.11"), "default MariaDB path should follow a changed phpStudy root");
     assert(updatedPaths.redisRoot.replace(/\\/g, "/").endsWith("/custom_redis"), "custom Redis path should be saved");
     const apacheService = updatedPathsState.services.find((item) => item.id === "apache");
+    const mariadbService = updatedPathsState.services.find((item) => item.id === "mariadb");
+    const mariadbSoftware = updatedPathsState.software.find((item) => item.id === "mariadb");
     const redisSoftware = updatedPathsState.software.find((item) => item.id === "redis");
     const httpdConfig = updatedPathsState.configFiles.find((item) => item.id === "httpd.conf");
+    const mariadbConfig = updatedPathsState.configFiles.find((item) => item.id === "mariadb.ini");
     assert(apacheService.configFile.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/Apache2.4.39/conf/httpd.conf"), "Apache service config path should be refreshed");
+    assert(mariadbService.configFile.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/MariaDB10.11/my.ini"), "MariaDB service config path should be refreshed");
+    assert(mariadbSoftware.executable.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/MariaDB10.11/bin/mysqld.exe"), "MariaDB software executable should be refreshed");
     assert(redisSoftware.executable.replace(/\\/g, "/").endsWith("/custom_redis/redis-server.exe"), "Redis software executable should be refreshed");
     assert(httpdConfig.path.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/Apache2.4.39/conf/httpd.conf"), "config file path should be refreshed");
+    assert(mariadbConfig.path.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/MariaDB10.11/my.ini"), "MariaDB config file path should be refreshed");
 
     const invalidPathsUpdate = await request(port, "/api/settings/paths", {
       method: "POST",

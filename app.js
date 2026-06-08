@@ -3,6 +3,7 @@ const services = [
   { name: "FTP0.9.60", type: "square", running: false, auto: true },
   { name: "MySQL5.7.26", type: "square", running: false, auto: true },
   { name: "MySQL8.0.12", type: "square", running: false, auto: true },
+  { name: "MariaDB10.11", type: "square", running: false, auto: false },
   { name: "Nginx1.15.11", type: "square", running: false, auto: true },
   { name: "Redis7.2.4", type: "square", running: false, auto: false },
   { name: "MinIO2025.04", type: "square", running: false, auto: false }
@@ -42,6 +43,7 @@ const software = [
   { name: "Nginx1.25.2", category: "Web Servers", group: "全部", desc: "web服务，发布包内置", icon: "monitor", installed: false },
   { name: "MySQL8.0.12", category: "数据库", group: "系统环境", desc: "数据库服务", icon: "db", installed: true },
   { name: "MySQL5.7.26", category: "数据库", group: "系统环境", desc: "数据库服务", icon: "db", installed: true },
+  { name: "MariaDB10.11", category: "数据库", group: "系统环境", desc: "MariaDB 数据库服务", icon: "db", installed: false },
   { name: "Redis7.2.4", category: "redis", group: "系统环境", desc: "缓存、Session、队列与分布式锁服务", icon: "redis", installed: true },
   { name: "MinIO RELEASE", category: "对象存储", group: "工具", desc: "兼容 S3 API 的本地对象存储服务", icon: "minio", installed: true },
   { name: "MySQL5.0.96", category: "数据库", group: "系统环境", desc: "数据库服务", icon: "db", installed: false },
@@ -52,7 +54,7 @@ const software = [
   { name: "composer2.7", category: "composer", group: "工具", desc: "PHP 依赖管理工具", icon: "monitor", installed: true }
 ];
 
-const configs = ["php.ini", "httpd.conf", "nginx.conf", "vhosts.conf", "mysql.ini", "redis.conf", "minio.env", "hosts"];
+const configs = ["php.ini", "httpd.conf", "nginx.conf", "vhosts.conf", "mysql.ini", "mariadb.ini", "redis.conf", "minio.env", "hosts"];
 const logLines = [
   "2026-06-07 21:09:04 MySQL8.0.12 已启动",
   "2026-06-07 21:09:04 MySQL8.0.12 正在启动....."
@@ -512,6 +514,7 @@ function renderFileLocations() {
     nginxRoot: "Nginx",
     mysql57Root: "MySQL 5.7",
     mysql80Root: "MySQL 8.0",
+    mariadbRoot: "MariaDB",
     phpRoot: "PHP",
     ftpRoot: "FTP",
     redisRoot: "Redis",
