@@ -94,6 +94,8 @@ async function main() {
   const port = await getFreePort();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "xpcn-smoke-"));
   const startupDir = fs.mkdtempSync(path.join(os.tmpdir(), "xpcn-startup-"));
+  const hostsPath = path.join(dataDir, "hosts");
+  fs.writeFileSync(hostsPath, "127.0.0.1 localhost\n", "utf8");
   const logs = [];
   const child = spawn(process.execPath, ["server.js"], {
     cwd: ROOT,
@@ -102,6 +104,7 @@ async function main() {
       XPCN_PORT: String(port),
       XPCN_DATA_DIR: dataDir,
       XPCN_STARTUP_DIR: startupDir,
+      XPCN_HOSTS_PATH: hostsPath,
       XPCN_SERVICE_DRY_RUN: "1"
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -136,6 +139,7 @@ async function main() {
     const siteState = JSON.parse(createSite.body).state;
     const siteIndex = siteState.websites.findIndex((item) => item.domain === "smoke.local");
     assert(siteIndex >= 0, "created site should appear in state");
+    assert(fs.readFileSync(hostsPath, "utf8").includes("127.0.0.1 smoke.local # XP.CN smoke.local"), "created site should be synced to hosts");
 
     const editedSitePath = path.join(dataDir, "www", "smoke-edited.local");
     const updateSite = await request(port, `/api/sites/${siteIndex}`, {
@@ -147,10 +151,14 @@ async function main() {
     assert(updatedSite.domain === "smoke-edited.local", "edited site domain should be saved");
     assert(updatedSite.port === "8089", "edited site port should be saved");
     assert(fs.existsSync(editedSitePath), "edited site directory should be created");
+    const hostsAfterEdit = fs.readFileSync(hostsPath, "utf8");
+    assert(!hostsAfterEdit.includes("smoke.local # XP.CN smoke.local"), "old site domain should be removed from hosts");
+    assert(hostsAfterEdit.includes("127.0.0.1 smoke-edited.local # XP.CN smoke-edited.local"), "edited site domain should be synced to hosts");
 
     const deleteSite = await request(port, `/api/sites/${siteIndex}`, { method: "DELETE" });
     assert(deleteSite.statusCode === 200, "removing a site record should return HTTP 200");
     assert(!JSON.parse(deleteSite.body).state.websites.some((item) => item.domain === "smoke-edited.local"), "removed site should disappear from state");
+    assert(!fs.readFileSync(hostsPath, "utf8").includes("smoke-edited.local # XP.CN smoke-edited.local"), "removed site should be removed from hosts");
 
     const createFtp = await request(port, "/api/ftp", {
       method: "POST",

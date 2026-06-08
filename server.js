@@ -10,6 +10,7 @@ const ROOT = __dirname;
 const DATA_DIR = process.env.XPCN_DATA_DIR ? path.resolve(process.env.XPCN_DATA_DIR) : path.join(ROOT, "data");
 const CONFIG_PATH = path.join(DATA_DIR, "config.json");
 const RUNTIME_DIR = path.join(ROOT, "runtime");
+const HOSTS_PATH = process.env.XPCN_HOSTS_PATH ? path.resolve(process.env.XPCN_HOSTS_PATH) : "C:/Windows/System32/drivers/etc/hosts";
 const STARTUP_DIR = process.env.XPCN_STARTUP_DIR || (process.env.APPDATA ? path.join(process.env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", "Startup") : "");
 const STARTUP_COMMAND = STARTUP_DIR ? path.join(STARTUP_DIR, "XPCN Local Manager.cmd") : "";
 const SERVICE_DRY_RUN = process.env.XPCN_SERVICE_DRY_RUN === "1";
@@ -340,7 +341,7 @@ function defaultConfig() {
       { id: "mysql.ini", label: "mysql.ini", path: toSlash(path.join(p.mysql80Root, "my.ini")) },
       { id: "redis.conf", label: "redis.conf", path: toSlash(path.join(p.redisRoot, "redis.conf")) },
       { id: "minio.env", label: "minio.env", path: toSlash(path.join(p.minioRoot, "minio.env")) },
-      { id: "hosts", label: "hosts", path: "C:/Windows/System32/drivers/etc/hosts" }
+      { id: "hosts", label: "hosts", path: toSlash(HOSTS_PATH) }
     ],
     logs: []
   };
@@ -680,6 +681,57 @@ function writeSiteConfig(index, site) {
   if (exists(nginxDir)) fs.writeFileSync(path.join(nginxDir, fileBase), nginxVhost(site), "utf8");
 }
 
+function hostsMarker(domain) {
+  return `# XP.CN ${domain}`;
+}
+
+function readHostsLines() {
+  if (!exists(HOSTS_PATH)) return [];
+  return fs.readFileSync(HOSTS_PATH, "utf8").split(/\r?\n/);
+}
+
+function writeHostsLines(lines) {
+  ensureDir(path.dirname(HOSTS_PATH));
+  if (exists(HOSTS_PATH)) backupFile(HOSTS_PATH);
+  fs.writeFileSync(HOSTS_PATH, `${lines.filter((line, index) => line !== "" || index < lines.length - 1).join(os.EOL)}${os.EOL}`, "utf8");
+}
+
+function syncHosts(domain) {
+  const cleanDomain = String(domain || "").trim();
+  if (!cleanDomain || cleanDomain === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(cleanDomain)) return;
+  const marker = hostsMarker(cleanDomain);
+  const lines = readHostsLines().filter((line) => !line.includes(marker));
+  lines.push(`127.0.0.1 ${cleanDomain} ${marker}`);
+  writeHostsLines(lines);
+}
+
+function removeHosts(domain) {
+  const cleanDomain = String(domain || "").trim();
+  if (!cleanDomain) return;
+  const marker = hostsMarker(cleanDomain);
+  const lines = readHostsLines();
+  const next = lines.filter((line) => !line.includes(marker));
+  if (next.length !== lines.length) writeHostsLines(next);
+}
+
+function trySyncHosts(domain) {
+  try {
+    syncHosts(domain);
+    return true;
+  } catch (error) {
+    addLog(`hosts 同步失败：${error.message}`);
+    return false;
+  }
+}
+
+function tryRemoveHosts(domain) {
+  try {
+    removeHosts(domain);
+  } catch (error) {
+    addLog(`hosts 清理失败：${error.message}`);
+  }
+}
+
 function createSite(data) {
   const site = {
     domain: String(data.domain || "").trim(),
@@ -695,6 +747,7 @@ function createSite(data) {
   ensureListenPort(site.port);
 
   writeSiteConfig(config.sites.length, site);
+  trySyncHosts(site.domain);
 
   config.sites.push(site);
   addLog(`网站 ${site.domain}:${site.port} 已创建`);
@@ -720,7 +773,9 @@ function updateSite(indexValue, data) {
   ensureDir(site.path);
   ensureListenPort(site.port);
   removeSiteConfig(index, config.sites[index]);
+  if (config.sites[index].domain !== site.domain) tryRemoveHosts(config.sites[index].domain);
   writeSiteConfig(index, site);
+  trySyncHosts(site.domain);
   config.sites[index] = site;
   addLog(`网站 ${site.domain}:${site.port} 已更新`);
   saveConfig();
@@ -923,7 +978,11 @@ function removeRecord(kind, indexValue) {
     sites: {
       label: "网站",
       items: config.sites,
-      describe: (item) => `${item.domain}:${item.port}`
+      describe: (item) => `${item.domain}:${item.port}`,
+      afterRemove: (item) => {
+        removeSiteConfig(index, item);
+        tryRemoveHosts(item.domain);
+      }
     },
     databases: {
       label: "数据库",
@@ -947,6 +1006,7 @@ function removeRecord(kind, indexValue) {
   const guarded = collection.guard ? collection.guard(record) : "";
   if (guarded) throw new Error(guarded);
   const [removed] = collection.items.splice(index, 1);
+  if (collection.afterRemove) collection.afterRemove(removed);
   const message = `${collection.label} ${collection.describe(removed)} 已从管理台移除`;
   addLog(message);
   saveConfig();

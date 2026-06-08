@@ -31,6 +31,7 @@ http://127.0.0.1:18113
 - `XPCN_PORT`：覆盖管理台端口。
 - `XPCN_DATA_DIR`：覆盖运行数据目录，便于测试或多实例隔离。
 - `XPCN_STARTUP_DIR`：覆盖开机自启脚本目录，主要用于测试。
+- `XPCN_HOSTS_PATH`：覆盖 hosts 文件路径，主要用于测试。
 
 ## 检查
 
@@ -73,7 +74,7 @@ codex/simple-web-manager
 
 - 首页：读取 Apache、Nginx、MySQL、Redis、MinIO、FTP 等服务运行状态。
 - 一键套件：启动或停止自动服务，并可在服务列表里调整每个服务是否加入套件。
-- 网站：创建和编辑本地站点目录，并尽量写入 Apache/Nginx vhost 配置，支持移除管理台记录。
+- 网站：创建和编辑本地站点目录，并尽量写入 Apache/Nginx vhost 与 hosts 映射，支持移除管理台记录。
 - 数据库：通过本机 `mysql.exe` 创建数据库/账号，支持修改 root 密码、导出 SQL 备份、查看最近备份和移除管理台记录。
 - FTP：创建和编辑本地 FTP 账号记录和目录，支持移除管理台记录。
 - 软件管理：识别本机组件安装状态，支持配置了下载地址的组件安装。
