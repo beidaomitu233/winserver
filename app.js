@@ -142,6 +142,12 @@ async function postApi(path, body = {}) {
     renderQuickStatus();
     if (activeView === "settings") renderSettings();
     if (result.message) addLog(result.message);
+  } else if (result.service) {
+    const index = services.findIndex((item) => item.id === result.service.id);
+    if (index >= 0) services[index] = { ...services[index], auto: !!result.service.auto };
+    renderQuickStatus();
+    renderServices();
+    if (result.message) addLog(result.message);
   } else if (result.message) addLog(result.message);
   return result;
 }
@@ -230,7 +236,7 @@ function renderServices() {
           <div class="service-name">${escapeHtml(service.name)}${service.installed === false ? '<small>未安装</small>' : ""}</div>
           <div class="state-cell">
             <span class="${shapeClass}"></span>
-            <span class="auto-badge">${service.auto ? "A" : ""}</span>
+            <button class="auto-badge ${service.auto ? "is-active" : ""}" type="button" data-service="${index}" data-service-action="auto" title="${service.auto ? "移出一键套件" : "加入一键套件"}">A</button>
           </div>
           <button class="primary" type="button" data-service="${index}" data-service-action="toggle">${service.running ? "停止" : "启动"}</button>
           <button class="ghost" type="button" data-service="${index}" data-service-action="restart"${disabled}>重启</button>
@@ -573,6 +579,30 @@ function bindEvents() {
           setView("settings");
         } else {
           openModal("config", `${service.name} 配置`);
+        }
+        return;
+      }
+
+      if (action === "auto") {
+        const previous = !!service.auto;
+        const next = !previous;
+        if (canUseBackend && service.id) {
+          service.auto = next;
+          renderQuickStatus();
+          renderServices();
+          try {
+            await postApi(`/api/services/${encodeURIComponent(service.id)}/auto`, { auto: next });
+          } catch (error) {
+            service.auto = previous;
+            renderQuickStatus();
+            renderServices();
+            addLog(`操作失败：${error.message}`);
+          }
+        } else {
+          service.auto = next;
+          addLog(`${service.name} 已${next ? "加入" : "移出"}一键套件`);
+          renderQuickStatus();
+          renderServices();
         }
         return;
       }

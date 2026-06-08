@@ -12,6 +12,7 @@ const CONFIG_PATH = path.join(DATA_DIR, "config.json");
 const RUNTIME_DIR = path.join(ROOT, "runtime");
 const STARTUP_DIR = process.env.XPCN_STARTUP_DIR || (process.env.APPDATA ? path.join(process.env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", "Startup") : "");
 const STARTUP_COMMAND = STARTUP_DIR ? path.join(STARTUP_DIR, "XPCN Local Manager.cmd") : "";
+const SERVICE_DRY_RUN = process.env.XPCN_SERVICE_DRY_RUN === "1";
 const PORT_OVERRIDE = process.env.XPCN_PORT !== undefined && process.env.XPCN_PORT !== "";
 const REQUESTED_PORT = Number(process.env.XPCN_PORT || 18113);
 const DEFAULT_PORT = Number.isFinite(REQUESTED_PORT) && REQUESTED_PORT > 0 ? REQUESTED_PORT : 18113;
@@ -462,6 +463,7 @@ async function taskRunning(processName) {
 }
 
 async function serviceRunning(service) {
+  if (SERVICE_DRY_RUN) return false;
   if (await portOpen(service.port)) return true;
   return taskRunning(service.processName);
 }
@@ -473,6 +475,10 @@ function assertInstalled(service) {
 }
 
 async function startService(service) {
+  if (SERVICE_DRY_RUN) {
+    addLog(`${service.name} 已启动`);
+    return `${service.name} 已启动`;
+  }
   assertInstalled(service);
   if (await serviceRunning(service)) return `${service.name} 已经在运行`;
   ensureDir(service.cwd || path.dirname(service.exe));
@@ -490,6 +496,10 @@ async function startService(service) {
 }
 
 async function stopService(service) {
+  if (SERVICE_DRY_RUN) {
+    addLog(`${service.name} 已停止`);
+    return `${service.name} 已停止`;
+  }
   if (service.id === "nginx" && exists(service.exe)) {
     try {
       await execFileAsync(service.exe, ["-p", service.cwd, "-s", "quit"], { cwd: service.cwd });
@@ -531,6 +541,16 @@ async function runSuite(action) {
   const message = action === "start" ? "自动套件启动完成" : "自动套件停止完成";
   addLog(message);
   return { message, results };
+}
+
+function updateServiceAuto(id, enabled) {
+  const service = config.services.find((item) => item.id === id);
+  if (!service) throw new Error("服务不存在");
+  service.auto = !!enabled;
+  saveConfig();
+  const message = `${service.name} 已${service.auto ? "加入" : "移出"}一键套件`;
+  addLog(message);
+  return { message, service: { id: service.id, auto: service.auto } };
 }
 
 function safeName(value) {
@@ -1020,6 +1040,13 @@ async function handleApi(req, res) {
     if (req.method === "POST" && requestUrl.pathname === "/api/settings/system") {
       const body = await readJsonBody(req);
       send(res, 200, { ok: true, message: "系统设置已保存", systemSettings: updateSystemSettings(body) });
+      return;
+    }
+
+    if (req.method === "POST" && parts[1] === "services" && parts[3] === "auto" && parts.length === 4) {
+      const body = await readJsonBody(req);
+      const result = updateServiceAuto(parts[2], body.auto);
+      send(res, 200, { ok: true, ...result });
       return;
     }
 

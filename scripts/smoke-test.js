@@ -97,7 +97,13 @@ async function main() {
   const logs = [];
   const child = spawn(process.execPath, ["server.js"], {
     cwd: ROOT,
-    env: { ...process.env, XPCN_PORT: String(port), XPCN_DATA_DIR: dataDir, XPCN_STARTUP_DIR: startupDir },
+    env: {
+      ...process.env,
+      XPCN_PORT: String(port),
+      XPCN_DATA_DIR: dataDir,
+      XPCN_STARTUP_DIR: startupDir,
+      XPCN_SERVICE_DRY_RUN: "1"
+    },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
   });
@@ -148,6 +154,24 @@ async function main() {
     const deleteRoot = await request(port, "/api/databases/0", { method: "DELETE" });
     assert(deleteRoot.statusCode === 500, "root database record should be protected");
     assert(deleteRoot.body.includes("root"), "root protection response should mention root");
+
+    const redisOn = await request(port, "/api/services/redis/auto", {
+      method: "POST",
+      body: { auto: true }
+    });
+    assert(redisOn.statusCode === 200, "enabling redis auto should return HTTP 200");
+    assert(JSON.parse(redisOn.body).service.auto === true, "redis should be in the suite");
+
+    const suiteStop = await request(port, "/api/suite/stop", { method: "POST", body: {} });
+    assert(suiteStop.statusCode === 200, "suite stop should return HTTP 200");
+    assert(JSON.parse(suiteStop.body).results.some((line) => line.includes("Redis7.2.4")), "suite should include redis after enabling auto");
+
+    const redisOff = await request(port, "/api/services/redis/auto", {
+      method: "POST",
+      body: { auto: false }
+    });
+    assert(redisOff.statusCode === 200, "disabling redis auto should return HTTP 200");
+    assert(JSON.parse(redisOff.body).service.auto === false, "redis should be removed from the suite");
 
     const settingsOn = await request(port, "/api/settings/system", {
       method: "POST",
