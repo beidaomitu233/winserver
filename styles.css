@@ -531,6 +531,37 @@ table {
   table-layout: fixed;
 }
 
+#view-website table {
+  min-width: 980px;
+}
+
+#view-website th:nth-child(1),
+#view-website td:nth-child(1) {
+  width: 52px;
+}
+
+#view-website th:nth-child(2),
+#view-website td:nth-child(2) {
+  width: 150px;
+}
+
+#view-website th:nth-child(3),
+#view-website td:nth-child(3) {
+  width: 70px;
+}
+
+#view-website th:nth-child(5),
+#view-website td:nth-child(5),
+#view-website th:nth-child(6),
+#view-website td:nth-child(6) {
+  width: 92px;
+}
+
+#view-website th:nth-child(7),
+#view-website td:nth-child(7) {
+  width: 330px;
+}
+
 thead th {
   height: 37px;
   background: #eaeaea;
@@ -559,8 +590,9 @@ tbody td.path {
 
 .manage-button,
 .drop-button {
-  min-width: 72px;
+  min-width: 58px;
   height: 37px;
+  padding: 0 10px;
   border: 1px solid #dbeeff;
   background: #fff;
   color: var(--blue);

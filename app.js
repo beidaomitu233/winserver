@@ -266,6 +266,13 @@ function renderLegend() {
     .join("");
 }
 
+function siteUrl(site) {
+  const sitePort = String(site.port || "");
+  const protocol = sitePort === "443" ? "https" : "http";
+  const port = sitePort && !["80", "443"].includes(sitePort) ? `:${sitePort}` : "";
+  return `${protocol}://${site.domain}${port}/`;
+}
+
 function renderRows(kind, query = "") {
   const q = query.trim().toLowerCase();
   const configsByKind = {
@@ -276,6 +283,7 @@ function renderRows(kind, query = "") {
         <td>${displayIndex + 1}</td><td>${escapeHtml(item.domain)}</td><td>${escapeHtml(item.port)}</td><td class="path">${escapeHtml(item.path)}</td>
         <td class="status-normal">${escapeHtml(item.status)}</td><td>${escapeHtml(item.expire)}</td>
         <td><div class="row-actions">
+          <button class="manage-button" type="button" data-open-url="${escapeHtml(siteUrl(item))}">打开</button>
           <button class="manage-button" type="button" data-open-folder="${escapeHtml(item.path)}">目录</button>
           <button class="manage-button" type="button" data-edit-record="site" data-record-index="${index}">编辑</button>
           <button class="manage-button" type="button" data-open-config="vhosts.conf">配置</button>
