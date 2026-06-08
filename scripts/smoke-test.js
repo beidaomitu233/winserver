@@ -177,6 +177,13 @@ async function main() {
     assert(deleteRoot.statusCode === 500, "root database record should be protected");
     assert(deleteRoot.body.includes("root"), "root protection response should mention root");
 
+    const exportRoot = await request(port, "/api/databases/0/export", { method: "POST", body: {} });
+    assert(exportRoot.statusCode === 200, "exporting a database record should return HTTP 200");
+    const exported = JSON.parse(exportRoot.body);
+    assert(exported.path.endsWith(".sql"), "database export should return an SQL file path");
+    assert(fs.existsSync(exported.path), "database export file should exist");
+    assert(fs.readFileSync(exported.path, "utf8").includes("database: root"), "dry-run export should contain the database name");
+
     const redisOn = await request(port, "/api/services/redis/auto", {
       method: "POST",
       body: { auto: true }

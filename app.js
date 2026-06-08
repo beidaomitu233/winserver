@@ -288,6 +288,7 @@ function renderRows(kind, query = "") {
         <td class="status-normal">${escapeHtml(item.status)}</td>
         <td><div class="row-actions">
           <button class="manage-button" type="button" data-open-url="http://127.0.0.1/phpmyadmin">phpMyAdmin</button>
+          <button class="manage-button" type="button" data-export-database="${index}" data-record-label="${escapeHtml(item.db)}">导出</button>
           <button class="manage-button" type="button" data-row-note="数据库 ${escapeHtml(item.db)} 可通过 phpMyAdmin 或 mysql 客户端做导入、导出、删除等高风险操作。">说明</button>
           <button class="manage-button danger" type="button" data-remove-record="databases" data-record-index="${index}" data-record-label="${escapeHtml(item.db)}">移除</button>
         </div></td>
@@ -678,6 +679,17 @@ function bindEvents() {
     if (rowNote) {
       openModal("config", "操作说明");
       $("#modalFields").innerHTML = `<p class="modal-note">${escapeHtml(rowNote.dataset.rowNote)}</p>`;
+    }
+
+    const exportDatabase = event.target.closest("[data-export-database]");
+    if (exportDatabase) {
+      const index = Number(exportDatabase.dataset.exportDatabase);
+      if (!Number.isInteger(index)) return;
+      if (canUseBackend) {
+        await runBackend(() => postApi(`/api/databases/${index}/export`));
+      } else {
+        addLog(`数据库 ${exportDatabase.dataset.recordLabel || index} 已准备导出`);
+      }
     }
 
     const editRecord = event.target.closest("[data-edit-record]");

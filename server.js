@@ -384,8 +384,15 @@ function saveConfig() {
 
 function addLog(message) {
   const date = new Date();
+  const stamp = localTimestamp(date);
+  config.logs.unshift(`${stamp} ${message}`);
+  config.logs = config.logs.slice(0, 300);
+  saveConfig();
+}
+
+function localTimestamp(date = new Date()) {
   const pad = (value) => String(value).padStart(2, "0");
-  const stamp = [
+  return [
     date.getFullYear(),
     "-",
     pad(date.getMonth() + 1),
@@ -398,9 +405,10 @@ function addLog(message) {
     ":",
     pad(date.getSeconds())
   ].join("");
-  config.logs.unshift(`${stamp} ${message}`);
-  config.logs = config.logs.slice(0, 300);
-  saveConfig();
+}
+
+function compactTimestamp(date = new Date()) {
+  return localTimestamp(date).replace(/[-: ]/g, "");
 }
 
 function publicService(service, running) {
@@ -701,6 +709,10 @@ function mysqlArgs(service, sql, passwordOverride) {
   return args;
 }
 
+function mysqlService() {
+  return config.services.find((item) => item.id === "mysql80") || config.services.find((item) => item.clientExe);
+}
+
 function sqlIdent(value) {
   return `\`${String(value).replace(/`/g, "``")}\``;
 }
@@ -710,7 +722,7 @@ function sqlString(value) {
 }
 
 async function createDatabase(data) {
-  const service = config.services.find((item) => item.id === "mysql80") || config.services.find((item) => item.clientExe);
+  const service = mysqlService();
   if (!service || !exists(service.clientExe)) throw new Error("未找到 mysql.exe，无法创建数据库");
   const db = String(data.db || "").trim();
   const user = String(data.user || db).trim();
@@ -731,7 +743,7 @@ async function createDatabase(data) {
 }
 
 async function changeRootPassword(data) {
-  const service = config.services.find((item) => item.id === "mysql80") || config.services.find((item) => item.clientExe);
+  const service = mysqlService();
   if (!service || !exists(service.clientExe)) throw new Error("未找到 mysql.exe，无法修改 root 密码");
   const newPass = String(data.pass || "").trim();
   if (!newPass) throw new Error("新密码不能为空");
@@ -741,6 +753,37 @@ async function changeRootPassword(data) {
   addLog("root 密码已修改");
   saveConfig();
   return { ok: true };
+}
+
+async function exportDatabase(indexValue) {
+  const index = Number(indexValue);
+  if (!Number.isInteger(index) || index < 0 || index >= config.databases.length) {
+    throw new Error("数据库记录不存在");
+  }
+  const record = config.databases[index];
+  const db = String(record.db || "").trim();
+  if (!db) throw new Error("数据库名不能为空");
+  const backupsDir = path.join(DATA_DIR, "backups");
+  ensureDir(backupsDir);
+  const stamp = compactTimestamp();
+  const filePath = path.join(backupsDir, `${safeName(db)}-${stamp}.sql`);
+
+  if (SERVICE_DRY_RUN) {
+    fs.writeFileSync(filePath, `-- XP.CN dry-run backup\n-- database: ${db}\n`, "utf8");
+  } else {
+    const service = mysqlService();
+    const dumpExe = service?.dumpExe || (service?.clientExe ? path.join(path.dirname(service.clientExe), "mysqldump.exe") : "");
+    if (!service || !exists(dumpExe)) throw new Error("未找到 mysqldump.exe，无法导出数据库");
+    const args = ["-uroot"];
+    if (config.mysqlRootPassword) args.push(`-p${config.mysqlRootPassword}`);
+    args.push("-P", String(service.port || 3306), "-h", "127.0.0.1", db);
+    const { stdout } = await execFileAsync(dumpExe, args);
+    fs.writeFileSync(filePath, stdout, "utf8");
+  }
+
+  const message = `数据库 ${db} 已导出：${toSlash(filePath)}`;
+  addLog(message);
+  return { message, path: toSlash(filePath) };
 }
 
 function createFtpAccount(data) {
@@ -1148,6 +1191,12 @@ async function handleApi(req, res) {
     if (req.method === "POST" && requestUrl.pathname === "/api/databases") {
       const body = await readJsonBody(req);
       send(res, 200, { ok: true, database: await createDatabase(body), state: await state() });
+      return;
+    }
+
+    if (req.method === "POST" && parts[1] === "databases" && parts[3] === "export" && parts.length === 4) {
+      const result = await exportDatabase(parts[2]);
+      send(res, 200, { ok: true, ...result, state: await state() });
       return;
     }
 
