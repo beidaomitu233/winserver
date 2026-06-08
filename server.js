@@ -732,6 +732,21 @@ function tryRemoveHosts(domain) {
   }
 }
 
+function findSiteConflict(domain, port, exceptIndex = -1) {
+  const normalizedDomain = String(domain || "").trim().toLowerCase();
+  const normalizedPort = String(port || "").trim();
+  return config.sites.findIndex((item, index) => {
+    if (index === exceptIndex) return false;
+    return String(item.domain || "").trim().toLowerCase() === normalizedDomain && String(item.port || "").trim() === normalizedPort;
+  });
+}
+
+function assertUniqueSite(site, exceptIndex = -1) {
+  if (findSiteConflict(site.domain, site.port, exceptIndex) >= 0) {
+    throw new Error(`网站 ${site.domain}:${site.port} 已存在`);
+  }
+}
+
 function createSite(data) {
   const site = {
     domain: String(data.domain || "").trim(),
@@ -742,6 +757,7 @@ function createSite(data) {
   };
   if (!site.domain) throw new Error("域名不能为空");
   if (!/^\d+$/.test(site.port)) throw new Error("端口必须是数字");
+  assertUniqueSite(site);
 
   ensureDir(site.path);
   ensureListenPort(site.port);
@@ -770,6 +786,7 @@ function updateSite(indexValue, data) {
   };
   if (!site.domain) throw new Error("域名不能为空");
   if (!/^\d+$/.test(site.port)) throw new Error("端口必须是数字");
+  assertUniqueSite(site, index);
   ensureDir(site.path);
   ensureListenPort(site.port);
   removeSiteConfig(index, config.sites[index]);

@@ -141,6 +141,32 @@ async function main() {
     assert(siteIndex >= 0, "created site should appear in state");
     assert(fs.readFileSync(hostsPath, "utf8").includes("127.0.0.1 smoke.local # XP.CN smoke.local"), "created site should be synced to hosts");
 
+    const duplicateSite = await request(port, "/api/sites", {
+      method: "POST",
+      body: { domain: "SMOKE.local", port: "8088", path: path.join(dataDir, "www", "smoke-duplicate.local") }
+    });
+    assert(duplicateSite.statusCode === 500, "creating a duplicate site domain and port should fail");
+    assert(duplicateSite.body.includes("已存在"), "duplicate site response should explain the conflict");
+
+    const secondSite = await request(port, "/api/sites", {
+      method: "POST",
+      body: { domain: "smoke-second.local", port: "8090", path: path.join(dataDir, "www", "smoke-second.local") }
+    });
+    assert(secondSite.statusCode === 200, "creating a second unique site should return HTTP 200");
+    const secondSiteState = JSON.parse(secondSite.body).state;
+    const secondSiteIndex = secondSiteState.websites.findIndex((item) => item.domain === "smoke-second.local");
+    assert(secondSiteIndex >= 0, "second created site should appear in state");
+
+    const conflictingEdit = await request(port, `/api/sites/${secondSiteIndex}`, {
+      method: "PUT",
+      body: { domain: "smoke.local", port: "8088", path: path.join(dataDir, "www", "smoke-conflict.local") }
+    });
+    assert(conflictingEdit.statusCode === 500, "editing a site into an existing domain and port should fail");
+    assert(conflictingEdit.body.includes("已存在"), "conflicting edit response should explain the conflict");
+
+    const deleteSecondSite = await request(port, `/api/sites/${secondSiteIndex}`, { method: "DELETE" });
+    assert(deleteSecondSite.statusCode === 200, "removing the second site record should return HTTP 200");
+
     const editedSitePath = path.join(dataDir, "www", "smoke-edited.local");
     const updateSite = await request(port, `/api/sites/${siteIndex}`, {
       method: "PUT",
