@@ -142,6 +142,11 @@ async function main() {
     assert(state.services.every((service) => service.type === "square"), "stopped services should render as square");
     assert(state.services.some((service) => service.id === "mariadb"), "MariaDB service should be exposed");
     assert(state.services.some((service) => service.id === "php73"), "PHP-CGI service should be exposed");
+    const phpServiceState = state.services.find((service) => service.id === "php73");
+    const minioServiceState = state.services.find((service) => service.id === "minio");
+    assert(phpServiceState.port === 9073, "PHP-CGI should avoid the MinIO API port by default");
+    assert(minioServiceState.port === 9000, "MinIO API should keep the default 9000 port");
+    assert(state.php && state.php.cgiPort === 9073, "state should expose the PHP-CGI port");
     assert(Array.isArray(state.software), "state.software should be an array");
     assert(state.software.some((item) => item.id === "mariadb"), "MariaDB software should be exposed");
     assert(Array.isArray(state.configFiles), "state.configFiles should be an array");
@@ -175,6 +180,7 @@ async function main() {
     const smokeNginxVhost = path.join(nginxVhostsDir, "smoke.local_8088.conf");
     assert(fs.existsSync(smokeApacheVhost), "created site should write an Apache vhost");
     assert(fs.existsSync(smokeNginxVhost), "created site should write an Nginx vhost");
+    assert(fs.readFileSync(smokeNginxVhost, "utf8").includes("fastcgi_pass   127.0.0.1:9073;"), "created Nginx vhost should target the configured PHP-CGI port");
 
     const siteConfig = await request(port, `/api/sites/${siteIndex}/config`);
     assert(siteConfig.statusCode === 200, "site config endpoint should return HTTP 200");
@@ -476,6 +482,7 @@ async function main() {
     assert(apacheService.configFile.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/Apache2.4.39/conf/httpd.conf"), "Apache service config path should be refreshed");
     assert(mariadbService.configFile.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/MariaDB10.11/my.ini"), "MariaDB service config path should be refreshed");
     assert(phpService.configFile.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/php/php7.3.4nts/php.ini"), "PHP service config path should be refreshed");
+    assert(phpService.port === 9073, "PHP service port should survive path refresh");
     assert(mariadbSoftware.executable.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/MariaDB10.11/bin/mysqld.exe"), "MariaDB software executable should be refreshed");
     assert(redisSoftware.executable.replace(/\\/g, "/").endsWith("/custom_redis/redis-server.exe"), "Redis software executable should be refreshed");
     assert(httpdConfig.path.replace(/\\/g, "/").endsWith("/custom_phpstudy/Extensions/Apache2.4.39/conf/httpd.conf"), "config file path should be refreshed");

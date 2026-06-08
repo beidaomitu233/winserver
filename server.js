@@ -150,6 +150,9 @@ function defaultConfig() {
       apiPort: 9000,
       consolePort: 9001
     },
+    php: {
+      cgiPort: 9073
+    },
     systemSettings: {
       autostart: false,
       startSuiteOnLaunch: false,
@@ -248,10 +251,10 @@ function defaultConfig() {
         name: "PHP7.3 CGI",
         type: "square",
         processName: "php-cgi.exe",
-        port: 9000,
+        port: 9073,
         cwd: toSlash(p.phpRoot),
         exe: toSlash(path.join(p.phpRoot, "php-cgi.exe")),
-        args: ["-b", "127.0.0.1:9000", "-c", toSlash(path.join(p.phpRoot, "php.ini"))],
+        args: ["-b", "127.0.0.1:9073", "-c", toSlash(path.join(p.phpRoot, "php.ini"))],
         configFile: toSlash(path.join(p.phpRoot, "php.ini")),
         auto: true
       },
@@ -436,6 +439,7 @@ function mergeConfig(base, saved) {
     ...saved,
     paths: { ...base.paths, ...(saved.paths || {}) },
     minio: { ...base.minio, ...(saved.minio || {}) },
+    php: { ...base.php, ...(saved.php || {}) },
     systemSettings: { ...base.systemSettings, ...(saved.systemSettings || {}) },
     services: mergeArrayById(base.services, saved.services),
     sites: Array.isArray(saved.sites) ? saved.sites : base.sites,
@@ -487,6 +491,7 @@ function updateKnownConfigFile(id, filePath) {
 function refreshDerivedPaths() {
   const p = config.paths;
   const minioData = config.minio.dataDir || slashJoin(p.minioRoot, "data");
+  const phpCgiPort = Number(config.php?.cgiPort || 9073);
 
   updateKnownService("apache", {
     cwd: toSlash(p.apacheRoot),
@@ -536,7 +541,8 @@ function refreshDerivedPaths() {
   updateKnownService("php73", {
     cwd: toSlash(p.phpRoot),
     exe: slashJoin(p.phpRoot, "php-cgi.exe"),
-    args: ["-b", "127.0.0.1:9000", "-c", slashJoin(p.phpRoot, "php.ini")],
+    port: phpCgiPort,
+    args: ["-b", `127.0.0.1:${phpCgiPort}`, "-c", slashJoin(p.phpRoot, "php.ini")],
     configFile: slashJoin(p.phpRoot, "php.ini")
   });
   updateKnownService("minio", {
@@ -850,6 +856,7 @@ function apacheVhost(site) {
 
 function nginxVhost(site) {
   const doc = toSlash(site.path);
+  const phpCgiPort = Number(config.php?.cgiPort || 9073);
   return `server {
         listen        ${site.port};
         server_name  ${site.domain};
@@ -860,7 +867,7 @@ function nginxVhost(site) {
             autoindex off;
         }
         location ~ \\.php(.*)$ {
-            fastcgi_pass   127.0.0.1:9000;
+            fastcgi_pass   127.0.0.1:${phpCgiPort};
             fastcgi_index  index.php;
             fastcgi_split_path_info  ^((?U).+\\.php)(/?.+)$;
             fastcgi_param  SCRIPT_FILENAME  $document_root$fastcgi_script_name;
@@ -1705,6 +1712,7 @@ async function state() {
     software: config.software.map(publicSoftware),
     configFiles: config.configFiles.map((item) => ({ id: item.id, label: item.label, path: item.path, exists: exists(item.path) })),
     systemSettings: publicSystemSettings(),
+    php: config.php,
     logs: config.logs,
     version: "8.1.1.3-local",
     configPath: CONFIG_PATH
