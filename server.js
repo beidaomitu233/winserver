@@ -818,10 +818,18 @@ function siteConfigName(site) {
   return `${safeName(site.domain)}_${site.port}.conf`;
 }
 
+function siteConfigId(site) {
+  return `site:${siteConfigName(site)}`;
+}
+
+function siteApacheConfigPath(site) {
+  return path.join(config.paths.apacheRoot, "conf", "vhosts", siteConfigName(site));
+}
+
 function removeSiteConfig(site) {
   if (!site) return;
   const fileBase = siteConfigName(site);
-  const apacheFile = path.join(config.paths.apacheRoot, "conf", "vhosts", fileBase);
+  const apacheFile = siteApacheConfigPath(site);
   const nginxFile = path.join(config.paths.nginxRoot, "conf", "vhosts", fileBase);
   for (const filePath of [apacheFile, nginxFile]) {
     if (exists(filePath)) backupFile(filePath);
@@ -984,6 +992,22 @@ function updateSite(indexValue, data) {
   addLog(`网站 ${site.domain}:${site.port} 已更新`);
   saveConfig();
   return site;
+}
+
+function siteConfigFile(indexValue) {
+  const index = Number(indexValue);
+  if (!Number.isInteger(index) || index < 0 || index >= config.sites.length) {
+    throw new Error("网站记录不存在");
+  }
+  const site = config.sites[index];
+  const filePath = siteApacheConfigPath(site);
+  return {
+    id: siteConfigId(site),
+    label: siteConfigName(site),
+    path: toSlash(filePath),
+    exists: exists(filePath),
+    content: exists(filePath) ? fs.readFileSync(filePath, "utf8") : ""
+  };
 }
 
 function mysqlArgs(service, sql, passwordOverride) {
@@ -1297,6 +1321,11 @@ function removeRecord(kind, indexValue) {
 }
 
 function getConfigFile(id) {
+  if (String(id || "").startsWith("site:")) {
+    const site = config.sites.find((item) => siteConfigId(item) === id);
+    if (!site) throw new Error("网站配置文件不存在");
+    return siteConfigFile(config.sites.indexOf(site));
+  }
   const item = config.configFiles.find((file) => file.id === id);
   if (!item) throw new Error("配置文件不存在");
   return {
@@ -1307,6 +1336,16 @@ function getConfigFile(id) {
 }
 
 function saveConfigFile(id, content) {
+  if (String(id || "").startsWith("site:")) {
+    const site = config.sites.find((item) => siteConfigId(item) === id);
+    if (!site) throw new Error("网站配置文件不存在");
+    const filePath = siteApacheConfigPath(site);
+    ensureDir(path.dirname(filePath));
+    backupFile(filePath);
+    fs.writeFileSync(filePath, String(content || ""), "utf8");
+    addLog(`${siteConfigName(site)} 已保存`);
+    return siteConfigFile(config.sites.indexOf(site));
+  }
   const item = config.configFiles.find((file) => file.id === id);
   if (!item) throw new Error("配置文件不存在");
   ensureDir(path.dirname(item.path));
@@ -1589,6 +1628,11 @@ async function handleApi(req, res) {
       return;
     }
 
+    if (req.method === "GET" && parts[1] === "sites" && parts[3] === "config" && parts.length === 4) {
+      send(res, 200, siteConfigFile(parts[2]));
+      return;
+    }
+
     if (req.method === "DELETE" && parts[1] === "sites" && parts.length === 3) {
       const result = removeRecord("sites", parts[2]);
       send(res, 200, { ok: true, ...result, state: await state() });
@@ -1643,13 +1687,13 @@ async function handleApi(req, res) {
     }
 
     if (req.method === "GET" && parts[1] === "config-files" && parts[2]) {
-      send(res, 200, getConfigFile(parts[2]));
+      send(res, 200, getConfigFile(decodeURIComponent(parts[2])));
       return;
     }
 
     if (req.method === "POST" && parts[1] === "config-files" && parts[2]) {
       const body = await readJsonBody(req);
-      send(res, 200, { ok: true, file: saveConfigFile(parts[2], body.content), state: await state() });
+      send(res, 200, { ok: true, file: saveConfigFile(decodeURIComponent(parts[2]), body.content), state: await state() });
       return;
     }
 

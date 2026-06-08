@@ -110,13 +110,18 @@ function replaceArray(target, items) {
 
 function applyState(state) {
   backendOnline = true;
+  const dynamicConfigFiles = configFiles.filter((item) => String(item.id || "").startsWith("site:"));
   replaceArray(services, state.services || []);
   replaceArray(websites, state.websites || []);
   replaceArray(databases, state.databases || []);
   replaceArray(databaseBackups, state.databaseBackups || []);
   replaceArray(ftpAccounts, state.ftpAccounts || []);
   replaceArray(software, state.software || []);
-  replaceArray(configFiles, state.configFiles || configFiles);
+  const nextConfigFiles = [...(state.configFiles || configFiles)];
+  dynamicConfigFiles.forEach((file) => {
+    if (!nextConfigFiles.some((item) => item.id === file.id)) nextConfigFiles.push(file);
+  });
+  replaceArray(configFiles, nextConfigFiles);
   replaceArray(configs, configFiles.map((item) => item.id));
   replaceArray(logLines, Array.isArray(state.logs) ? state.logs : logLines);
   Object.assign(systemSettings, state.systemSettings || {});
@@ -125,6 +130,15 @@ function applyState(state) {
   if (version && state.version) version.innerHTML = `<span>ⓘ</span> 版本：${escapeHtml(state.version)}`;
   renderAll();
   if (activeView === "settings") loadConfigFile(activeConfig);
+}
+
+function mergeConfigFileMeta(file) {
+  if (!file?.id) return;
+  const meta = { id: file.id, label: file.label || file.id, path: file.path || "", exists: !!file.exists };
+  const index = configFiles.findIndex((item) => item.id === file.id);
+  if (index >= 0) configFiles[index] = { ...configFiles[index], ...meta };
+  else configFiles.push(meta);
+  replaceArray(configs, configFiles.map((item) => item.id));
 }
 
 async function refreshState() {
@@ -141,6 +155,7 @@ async function refreshState() {
 async function postApi(path, body = {}) {
   const result = await api(path, { method: "POST", body: JSON.stringify(body) });
   if (result.state) applyState(result.state);
+  if (result.file) mergeConfigFileMeta(result.file);
   else if (result.systemSettings) {
     Object.assign(systemSettings, result.systemSettings);
     renderQuickStatus();
@@ -308,7 +323,7 @@ function renderRows(kind, query = "") {
           <button class="manage-button" type="button" data-open-url="${escapeHtml(siteUrl(item))}">打开</button>
           <button class="manage-button" type="button" data-open-folder="${escapeHtml(item.path)}">目录</button>
           <button class="manage-button" type="button" data-edit-record="site" data-record-index="${index}">编辑</button>
-          <button class="manage-button" type="button" data-open-config="vhosts.conf">配置</button>
+          <button class="manage-button" type="button" data-open-site-config="${index}">配置</button>
           <button class="manage-button danger" type="button" data-remove-record="sites" data-record-index="${index}" data-record-label="${escapeHtml(item.domain)}">移除</button>
         </div></td>
       `
@@ -530,11 +545,29 @@ async function loadConfigFile(id = activeConfig) {
   try {
     const file = await api(`/api/config-files/${encodeURIComponent(id)}`);
     configContents[id] = file.content || "";
-    const index = configFiles.findIndex((item) => item.id === file.id);
-    if (index >= 0) configFiles[index] = { ...configFiles[index], ...file };
+    mergeConfigFileMeta(file);
     renderSettings();
   } catch (error) {
     addLog(`读取配置失败：${error.message}`);
+  }
+}
+
+async function openSiteConfig(index) {
+  if (!canUseBackend) {
+    activeConfig = "vhosts.conf";
+    setView("settings");
+    return;
+  }
+  try {
+    const file = await api(`/api/sites/${index}/config`);
+    mergeConfigFileMeta(file);
+    configContents[file.id] = file.content || "";
+    activeConfig = file.id;
+    activeSettings = "config";
+    setView("settings");
+    renderSettings();
+  } catch (error) {
+    addLog(`读取网站配置失败：${error.message}`);
   }
 }
 
@@ -741,6 +774,12 @@ function bindEvents() {
     if (openConfig) {
       activeConfig = openConfig.dataset.openConfig;
       setView("settings");
+    }
+
+    const openSiteConfigButton = event.target.closest("[data-open-site-config]");
+    if (openSiteConfigButton) {
+      const index = Number(openSiteConfigButton.dataset.openSiteConfig);
+      if (Number.isInteger(index)) await openSiteConfig(index);
     }
 
     const rowNote = event.target.closest("[data-row-note]");

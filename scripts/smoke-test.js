@@ -158,6 +158,21 @@ async function main() {
     assert(fs.existsSync(smokeApacheVhost), "created site should write an Apache vhost");
     assert(fs.existsSync(smokeNginxVhost), "created site should write an Nginx vhost");
 
+    const siteConfig = await request(port, `/api/sites/${siteIndex}/config`);
+    assert(siteConfig.statusCode === 200, "site config endpoint should return HTTP 200");
+    const siteConfigBody = JSON.parse(siteConfig.body);
+    assert(siteConfigBody.id === "site:smoke.local_8088.conf", "site config id should use the stable vhost name");
+    assert(siteConfigBody.path.replace(/\\/g, "/").endsWith("/smoke.local_8088.conf"), "site config path should point to the created Apache vhost");
+    assert(siteConfigBody.content.includes("ServerName smoke.local"), "site config content should include the created domain");
+
+    const updatedSiteConfigContent = `${siteConfigBody.content}\n# smoke site config edit\n`;
+    const saveSiteConfig = await request(port, `/api/config-files/${encodeURIComponent(siteConfigBody.id)}`, {
+      method: "POST",
+      body: { content: updatedSiteConfigContent }
+    });
+    assert(saveSiteConfig.statusCode === 200, "saving a dynamic site config should return HTTP 200");
+    assert(fs.readFileSync(smokeApacheVhost, "utf8").includes("# smoke site config edit"), "saving a dynamic site config should update the Apache vhost file");
+
     const invalidCreatePort = await request(port, "/api/sites", {
       method: "POST",
       body: { domain: "invalid-port.local", port: "70000", path: path.join(dataDir, "www", "invalid-port.local") }
