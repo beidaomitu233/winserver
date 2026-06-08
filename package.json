@@ -1,0 +1,15 @@
+{
+  "name": "xpcn-local-manager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local XP.CN-style Windows web environment manager",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "check": "node --check server.js && node --check app.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
