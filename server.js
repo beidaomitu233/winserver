@@ -903,6 +903,20 @@ function listDatabaseBackups() {
     .slice(0, 50);
 }
 
+function findFtpConflict(user, exceptIndex = -1) {
+  const normalizedUser = String(user || "").trim().toLowerCase();
+  return config.ftpAccounts.findIndex((item, index) => {
+    if (index === exceptIndex) return false;
+    return String(item.user || "").trim().toLowerCase() === normalizedUser;
+  });
+}
+
+function assertUniqueFtpAccount(account, exceptIndex = -1) {
+  if (findFtpConflict(account.user, exceptIndex) >= 0) {
+    throw new Error(`FTP账号 ${account.user} 已存在`);
+  }
+}
+
 function createFtpAccount(data) {
   const account = {
     user: String(data.user || "").trim(),
@@ -911,6 +925,7 @@ function createFtpAccount(data) {
     status: "正常"
   };
   if (!account.user) throw new Error("FTP 用户名不能为空");
+  assertUniqueFtpAccount(account);
   ensureDir(account.path);
   config.ftpAccounts.push(account);
   addLog(`FTP账号 ${account.user} 已创建`);
@@ -931,6 +946,7 @@ function updateFtpAccount(indexValue, data) {
     status: data.status || config.ftpAccounts[index].status || "正常"
   };
   if (!account.user) throw new Error("FTP 用户名不能为空");
+  assertUniqueFtpAccount(account, index);
   ensureDir(account.path);
   config.ftpAccounts[index] = account;
   addLog(`FTP账号 ${account.user} 已更新`);

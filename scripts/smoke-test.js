@@ -200,6 +200,32 @@ async function main() {
     const ftpIndex = ftpState.ftpAccounts.findIndex((item) => item.user === "smoke_ftp");
     assert(ftpIndex >= 0, "created FTP record should appear in state");
 
+    const duplicateFtp = await request(port, "/api/ftp", {
+      method: "POST",
+      body: { user: "SMOKE_FTP", path: path.join(dataDir, "ftp-duplicate"), permission: "读写" }
+    });
+    assert(duplicateFtp.statusCode === 500, "creating a duplicate FTP user should fail");
+    assert(duplicateFtp.body.includes("已存在"), "duplicate FTP response should explain the conflict");
+
+    const secondFtp = await request(port, "/api/ftp", {
+      method: "POST",
+      body: { user: "smoke_ftp_second", path: path.join(dataDir, "ftp-second"), permission: "只读" }
+    });
+    assert(secondFtp.statusCode === 200, "creating a second unique FTP record should return HTTP 200");
+    const secondFtpState = JSON.parse(secondFtp.body).state;
+    const secondFtpIndex = secondFtpState.ftpAccounts.findIndex((item) => item.user === "smoke_ftp_second");
+    assert(secondFtpIndex >= 0, "second FTP record should appear in state");
+
+    const conflictingFtpEdit = await request(port, `/api/ftp/${secondFtpIndex}`, {
+      method: "PUT",
+      body: { user: "smoke_ftp", path: path.join(dataDir, "ftp-conflict"), permission: "只读" }
+    });
+    assert(conflictingFtpEdit.statusCode === 500, "editing FTP into an existing user should fail");
+    assert(conflictingFtpEdit.body.includes("已存在"), "conflicting FTP edit response should explain the conflict");
+
+    const deleteSecondFtp = await request(port, `/api/ftp/${secondFtpIndex}`, { method: "DELETE" });
+    assert(deleteSecondFtp.statusCode === 200, "removing the second FTP record should return HTTP 200");
+
     const editedFtpPath = path.join(dataDir, "ftp-edited");
     const updateFtp = await request(port, `/api/ftp/${ftpIndex}`, {
       method: "PUT",
