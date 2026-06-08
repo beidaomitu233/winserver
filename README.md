@@ -32,6 +32,12 @@ http://127.0.0.1:18113
 npm run check
 ```
 
+运行轻量冒烟测试（会自动选择一个临时端口启动管理台，验证 `/api/state` 和首页）：
+
+```powershell
+npm test
+```
+
 ## UI 分支切换
 
 本项目按 UI 形态使用 git 分支隔离，当前可交付分支是 Web 版：

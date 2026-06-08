@@ -10,7 +10,9 @@ const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
 const CONFIG_PATH = path.join(DATA_DIR, "config.json");
 const RUNTIME_DIR = path.join(ROOT, "runtime");
-const DEFAULT_PORT = Number(process.env.XPCN_PORT || 18113);
+const PORT_OVERRIDE = process.env.XPCN_PORT !== undefined && process.env.XPCN_PORT !== "";
+const REQUESTED_PORT = Number(process.env.XPCN_PORT || 18113);
+const DEFAULT_PORT = Number.isFinite(REQUESTED_PORT) && REQUESTED_PORT > 0 ? REQUESTED_PORT : 18113;
 
 function toSlash(value) {
   return String(value || "").replace(/\\/g, "/");
@@ -338,7 +340,7 @@ function defaultConfig() {
 
 function mergeConfig(base, saved) {
   if (!saved || typeof saved !== "object") return base;
-  return {
+  const merged = {
     ...base,
     ...saved,
     paths: { ...base.paths, ...(saved.paths || {}) },
@@ -351,6 +353,8 @@ function mergeConfig(base, saved) {
     configFiles: Array.isArray(saved.configFiles) ? saved.configFiles : base.configFiles,
     logs: Array.isArray(saved.logs) ? saved.logs : []
   };
+  if (PORT_OVERRIDE) merged.port = DEFAULT_PORT;
+  return merged;
 }
 
 function loadConfig() {
