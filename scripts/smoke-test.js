@@ -94,7 +94,13 @@ async function main() {
   const port = await getFreePort();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "xpcn-smoke-"));
   const startupDir = fs.mkdtempSync(path.join(os.tmpdir(), "xpcn-startup-"));
+  const phpStudyRoot = path.join(dataDir, "phpstudy_pro");
+  const apacheVhostsDir = path.join(phpStudyRoot, "Extensions", "Apache2.4.39", "conf", "vhosts");
+  const nginxVhostsDir = path.join(phpStudyRoot, "Extensions", "Nginx1.15.11", "conf", "vhosts");
   const hostsPath = path.join(dataDir, "hosts");
+  fs.mkdirSync(apacheVhostsDir, { recursive: true });
+  fs.mkdirSync(nginxVhostsDir, { recursive: true });
+  fs.writeFileSync(path.join(apacheVhostsDir, "Listen.conf"), "Listen 80\n", "utf8");
   fs.writeFileSync(hostsPath, "127.0.0.1 localhost\n", "utf8");
   const logs = [];
   const child = spawn(process.execPath, ["server.js"], {
@@ -103,6 +109,7 @@ async function main() {
       ...process.env,
       XPCN_PORT: String(port),
       XPCN_DATA_DIR: dataDir,
+      XPCN_PHPSTUDY: phpStudyRoot,
       XPCN_STARTUP_DIR: startupDir,
       XPCN_HOSTS_PATH: hostsPath,
       XPCN_SERVICE_DRY_RUN: "1"
@@ -145,6 +152,10 @@ async function main() {
     const siteIndex = siteState.websites.findIndex((item) => item.domain === "smoke.local");
     assert(siteIndex >= 0, "created site should appear in state");
     assert(fs.readFileSync(hostsPath, "utf8").includes("127.0.0.1 smoke.local # XP.CN smoke.local"), "created site should be synced to hosts");
+    const smokeApacheVhost = path.join(apacheVhostsDir, "smoke.local_8088.conf");
+    const smokeNginxVhost = path.join(nginxVhostsDir, "smoke.local_8088.conf");
+    assert(fs.existsSync(smokeApacheVhost), "created site should write an Apache vhost");
+    assert(fs.existsSync(smokeNginxVhost), "created site should write an Nginx vhost");
 
     const invalidCreatePort = await request(port, "/api/sites", {
       method: "POST",
@@ -168,6 +179,8 @@ async function main() {
     const secondSiteState = JSON.parse(secondSite.body).state;
     const secondSiteIndex = secondSiteState.websites.findIndex((item) => item.domain === "smoke-second.local");
     assert(secondSiteIndex >= 0, "second created site should appear in state");
+    const secondApacheVhost = path.join(apacheVhostsDir, "smoke-second.local_8090.conf");
+    assert(fs.existsSync(secondApacheVhost), "second created site should write a stable vhost name");
 
     const conflictingEdit = await request(port, `/api/sites/${secondSiteIndex}`, {
       method: "PUT",
@@ -185,6 +198,7 @@ async function main() {
 
     const deleteSecondSite = await request(port, `/api/sites/${secondSiteIndex}`, { method: "DELETE" });
     assert(deleteSecondSite.statusCode === 200, "removing the second site record should return HTTP 200");
+    assert(!fs.existsSync(secondApacheVhost), "removed second site should remove its stable vhost file");
 
     const editedSitePath = path.join(dataDir, "www", "smoke-edited.local");
     const updateSite = await request(port, `/api/sites/${siteIndex}`, {
@@ -196,6 +210,8 @@ async function main() {
     assert(updatedSite.domain === "smoke-edited.local", "edited site domain should be saved");
     assert(updatedSite.port === "8089", "edited site port should be saved");
     assert(fs.existsSync(editedSitePath), "edited site directory should be created");
+    assert(!fs.existsSync(smokeApacheVhost), "editing a site should remove the old Apache vhost");
+    assert(fs.existsSync(path.join(apacheVhostsDir, "smoke-edited.local_8089.conf")), "editing a site should write the new Apache vhost");
     const hostsAfterEdit = fs.readFileSync(hostsPath, "utf8");
     assert(!hostsAfterEdit.includes("smoke.local # XP.CN smoke.local"), "old site domain should be removed from hosts");
     assert(hostsAfterEdit.includes("127.0.0.1 smoke-edited.local # XP.CN smoke-edited.local"), "edited site domain should be synced to hosts");

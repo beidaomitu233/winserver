@@ -658,13 +658,13 @@ function ensureListenPort(port) {
   }
 }
 
-function siteConfigName(index, site) {
-  return `${index}${safeName(site.domain)}_${site.port}.conf`;
+function siteConfigName(site) {
+  return `${safeName(site.domain)}_${site.port}.conf`;
 }
 
-function removeSiteConfig(index, site) {
+function removeSiteConfig(site) {
   if (!site) return;
-  const fileBase = siteConfigName(index, site);
+  const fileBase = siteConfigName(site);
   const apacheFile = path.join(config.paths.apacheRoot, "conf", "vhosts", fileBase);
   const nginxFile = path.join(config.paths.nginxRoot, "conf", "vhosts", fileBase);
   for (const filePath of [apacheFile, nginxFile]) {
@@ -673,8 +673,8 @@ function removeSiteConfig(index, site) {
   }
 }
 
-function writeSiteConfig(index, site) {
-  const fileBase = siteConfigName(index, site);
+function writeSiteConfig(site) {
+  const fileBase = siteConfigName(site);
   const apacheDir = path.join(config.paths.apacheRoot, "conf", "vhosts");
   const nginxDir = path.join(config.paths.nginxRoot, "conf", "vhosts");
   if (exists(apacheDir)) fs.writeFileSync(path.join(apacheDir, fileBase), apacheVhost(site), "utf8");
@@ -768,7 +768,7 @@ function createSite(data) {
   ensureDir(site.path);
   ensureListenPort(site.port);
 
-  writeSiteConfig(config.sites.length, site);
+  writeSiteConfig(site);
   trySyncHosts(site.domain);
 
   config.sites.push(site);
@@ -795,9 +795,9 @@ function updateSite(indexValue, data) {
   assertUniqueSite(site, index);
   ensureDir(site.path);
   ensureListenPort(site.port);
-  removeSiteConfig(index, config.sites[index]);
+  removeSiteConfig(config.sites[index]);
   if (config.sites[index].domain !== site.domain) tryRemoveHosts(config.sites[index].domain);
-  writeSiteConfig(index, site);
+  writeSiteConfig(site);
   trySyncHosts(site.domain);
   config.sites[index] = site;
   addLog(`网站 ${site.domain}:${site.port} 已更新`);
@@ -1031,7 +1031,7 @@ function removeRecord(kind, indexValue) {
       items: config.sites,
       describe: (item) => `${item.domain}:${item.port}`,
       afterRemove: (item) => {
-        removeSiteConfig(index, item);
+        removeSiteConfig(item);
         tryRemoveHosts(item.domain);
       }
     },
