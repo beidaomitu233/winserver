@@ -206,6 +206,15 @@ function suiteRunning(items = services) {
   return autoServices(items).some((item) => item.running);
 }
 
+function softwareInstallState(item) {
+  const canInstall = !item.installed && item.installable !== false;
+  return {
+    canInstall,
+    text: item.installed ? "已安装" : canInstall ? "安装" : "需配置",
+    title: item.installed ? "已安装" : canInstall ? "下载安装" : (item.installNote || "请先在 data/config.json 中配置下载地址")
+  };
+}
+
 function renderQuickStatus() {
   const suiteButton = $('[data-action="suite-toggle"]');
   const suiteDot = suiteButton?.parentElement.querySelector(".status-dot");
@@ -391,15 +400,19 @@ function renderSoftware() {
   });
 
   $("#softwareList").innerHTML = rows
-    .map((item, index) => `
-      <div class="software-row">
-        <div class="software-icon">${softwareIcon(item.icon)}</div>
-        <div class="software-name">${escapeHtml(item.name)}</div>
-        <div class="software-desc" title="${escapeHtml(item.executable || item.installDir || item.desc)}">${escapeHtml(item.desc)}</div>
-        <button class="install-button" type="button" data-software-index="${software.indexOf(item)}" ${item.installed ? "disabled" : ""}>${item.installed ? "已安装" : "安装"}</button>
-        ${item.serviceId || item.installed ? `<button class="primary" type="button" data-open-settings="${software.indexOf(item)}">设置</button>` : "<span></span>"}
-      </div>
-    `)
+    .map((item) => {
+      const index = software.indexOf(item);
+      const installState = softwareInstallState(item);
+      return `
+        <div class="software-row">
+          <div class="software-icon">${softwareIcon(item.icon)}</div>
+          <div class="software-name">${escapeHtml(item.name)}</div>
+          <div class="software-desc" title="${escapeHtml(item.executable || item.installDir || item.desc)}">${escapeHtml(item.desc)}</div>
+          <button class="install-button" type="button" data-software-index="${index}" title="${escapeHtml(installState.title)}" ${installState.canInstall ? "" : "disabled"}>${installState.text}</button>
+          ${item.serviceId || item.installed ? `<button class="primary" type="button" data-open-settings="${index}">设置</button>` : "<span></span>"}
+        </div>
+      `;
+    })
     .join("");
 }
 
@@ -864,6 +877,10 @@ function bindEvents() {
     if (softwareButton) {
       const item = software[Number(softwareButton.dataset.softwareIndex)];
       if (item.installed) return;
+      if (item.installable === false) {
+        addLog(item.installNote || `${item.name} 未配置下载地址`);
+        return;
+      }
       if (canUseBackend && item.id) await runBackend(() => postApi(`/api/software/${encodeURIComponent(item.id)}/install`));
       else {
         item.installed = true;
