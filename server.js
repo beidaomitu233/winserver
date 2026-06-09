@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const net = require("net");
+const crypto = require("crypto");
 const { spawn, execFile } = require("child_process");
 
 const ROOT = __dirname;
@@ -1421,6 +1422,21 @@ function ftpConfigPath() {
   return service?.configFile || slashJoin(config.paths.ftpRoot, "FileZilla Server.xml");
 }
 
+function ftpPasswordHash(pass) {
+  const password = String(pass || "").trim();
+  return password ? crypto.createHash("md5").update(password).digest("hex") : "";
+}
+
+function publicFtpAccount(account) {
+  return {
+    user: account.user,
+    path: account.path,
+    permission: account.permission,
+    status: account.status || "正常",
+    pass: account.passwordHash ? "******" : ""
+  };
+}
+
 function ftpPermissionValue(permission) {
   const text = String(permission || "读写");
   const canWrite = text.includes("写");
@@ -1442,7 +1458,7 @@ function ftpUserXml(account) {
   return [
     `  <!-- XP.CN managed account: ${escapeXml(account.user)} -->`,
     `  <User Name="${escapeXml(account.user)}">`,
-    "    <Option Name=\"Pass\"></Option>",
+    `    <Option Name="Pass">${escapeXml(account.passwordHash || "")}</Option>`,
     "    <Option Name=\"Group\"></Option>",
     "    <Option Name=\"Bypass server userlimit\">0</Option>",
     "    <Option Name=\"User Limit\">0</Option>",
@@ -1529,6 +1545,7 @@ function createFtpAccount(data) {
     user: String(data.user || "").trim(),
     path: toSlash(data.path || config.paths.wwwRoot),
     permission: String(data.permission || "读写"),
+    passwordHash: ftpPasswordHash(data.pass),
     status: "正常"
   };
   assertValidFtpUser(account.user);
@@ -1553,6 +1570,7 @@ function updateFtpAccount(indexValue, data) {
     permission: String(data.permission || config.ftpAccounts[index].permission || "读写"),
     status: data.status || config.ftpAccounts[index].status || "正常"
   };
+  if (String(data.pass || "").trim()) account.passwordHash = ftpPasswordHash(data.pass);
   assertValidFtpUser(account.user);
   assertUniqueFtpAccount(account, index);
   ensureDir(account.path);
@@ -1916,7 +1934,7 @@ async function state() {
     websites: config.sites,
     databases: config.databases,
     databaseBackups: listDatabaseBackups(),
-    ftpAccounts: config.ftpAccounts,
+    ftpAccounts: config.ftpAccounts.map(publicFtpAccount),
     software: config.software.map(publicSoftware),
     configFiles: config.configFiles.map((item) => ({ id: item.id, label: item.label, path: item.path, exists: exists(item.path) })),
     systemSettings: publicSystemSettings(),
@@ -2099,18 +2117,21 @@ async function handleApi(req, res) {
 
     if (req.method === "POST" && requestUrl.pathname === "/api/ftp") {
       const body = await readJsonBody(req);
-      send(res, 200, { ok: true, account: createFtpAccount(body), state: await state() });
+      const account = createFtpAccount(body);
+      send(res, 200, { ok: true, account: publicFtpAccount(account), state: await state() });
       return;
     }
 
     if (req.method === "PUT" && parts[1] === "ftp" && parts.length === 3) {
       const body = await readJsonBody(req);
-      send(res, 200, { ok: true, account: updateFtpAccount(parts[2], body), state: await state() });
+      const account = updateFtpAccount(parts[2], body);
+      send(res, 200, { ok: true, account: publicFtpAccount(account), state: await state() });
       return;
     }
 
     if (req.method === "DELETE" && parts[1] === "ftp" && parts.length === 3) {
       const result = removeRecord("ftp", parts[2]);
+      if (result.removed) result.removed = publicFtpAccount(result.removed);
       send(res, 200, { ok: true, ...result, state: await state() });
       return;
     }

@@ -76,7 +76,7 @@ codex/simple-web-manager
 - 一键套件：启动或停止自动服务，并可在服务列表里调整每个服务是否加入套件。
 - 网站：创建和编辑本地站点目录，并尽量写入 Apache/Nginx vhost 与 hosts 映射，支持移除管理台记录。
 - 数据库：通过本机 MySQL/MariaDB `mysql.exe` 创建数据库/账号，支持修改 root 密码、导出 SQL 备份、导入/还原/删除 SQL 备份文件、查看最近备份和移除管理台记录。
-- FTP：创建和编辑本地 FTP 账号目录，并同步写入 FileZilla Server.xml；移除记录时清理 XP.CN 托管的账号配置。
+- FTP：创建和编辑本地 FTP 账号、密码、目录与权限，并同步写入 FileZilla Server.xml；移除记录时清理 XP.CN 托管的账号配置。
 - 软件管理：识别本机组件安装状态，支持配置了下载地址的组件安装。
 - 设置：读取和保存 `php.ini`、`httpd.conf`、`nginx.conf`、`my.ini`、`redis.conf`、`hosts` 等配置文件，支持系统设置、开机自启脚本，以及在界面中编辑本机组件路径。
 

@@ -3,12 +3,17 @@ const net = require("net");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 const { spawn } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function md5(value) {
+  return crypto.createHash("md5").update(value).digest("hex");
 }
 
 function getFreePort() {
@@ -277,14 +282,17 @@ async function main() {
 
     const createFtp = await request(port, "/api/ftp", {
       method: "POST",
-      body: { user: "smoke_ftp", path: path.join(dataDir, "ftp"), permission: "读写" }
+      body: { user: "smoke_ftp", pass: "ftpSecret123", path: path.join(dataDir, "ftp"), permission: "读写" }
     });
     assert(createFtp.statusCode === 200, "creating an FTP record should return HTTP 200");
     const ftpState = JSON.parse(createFtp.body).state;
     const ftpIndex = ftpState.ftpAccounts.findIndex((item) => item.user === "smoke_ftp");
     assert(ftpIndex >= 0, "created FTP record should appear in state");
+    assert(!JSON.stringify(ftpState.ftpAccounts[ftpIndex]).includes("passwordHash"), "FTP state should not expose password hashes");
+    assert(ftpState.ftpAccounts[ftpIndex].pass === "******", "FTP state should show a masked password marker");
     const ftpConfigAfterCreate = fs.readFileSync(ftpConfigPath, "utf8");
     assert(ftpConfigAfterCreate.includes("XP.CN managed account: smoke_ftp"), "created FTP account should be synced to FileZilla config");
+    assert(ftpConfigAfterCreate.includes(`<Option Name="Pass">${md5("ftpSecret123")}</Option>`), "created FTP account should sync the hashed password");
     assert(ftpConfigAfterCreate.includes(`Permission Dir="${path.join(dataDir, "ftp").replace(/\\/g, "/")}"`), "created FTP account should sync the configured directory");
     assert(ftpConfigAfterCreate.includes('<Option Name="FileWrite">1</Option>'), "read-write FTP account should allow file writes");
     assert(ftpConfigAfterCreate.includes("manual_user"), "syncing FTP accounts should preserve unmanaged FileZilla users");
@@ -325,7 +333,7 @@ async function main() {
     const editedFtpPath = path.join(dataDir, "ftp-edited");
     const updateFtp = await request(port, `/api/ftp/${ftpIndex}`, {
       method: "PUT",
-      body: { user: "smoke_ftp_edited", path: editedFtpPath, permission: "只读" }
+      body: { user: "smoke_ftp_edited", pass: "ftpSecret456", path: editedFtpPath, permission: "只读" }
     });
     assert(updateFtp.statusCode === 200, "editing an FTP record should return HTTP 200");
     const updatedFtp = JSON.parse(updateFtp.body).state.ftpAccounts[ftpIndex];
@@ -335,6 +343,7 @@ async function main() {
     const ftpConfigAfterEdit = fs.readFileSync(ftpConfigPath, "utf8");
     assert(!ftpConfigAfterEdit.includes("XP.CN managed account: smoke_ftp<"), "editing FTP user should remove the old managed user block");
     assert(ftpConfigAfterEdit.includes("XP.CN managed account: smoke_ftp_edited"), "editing FTP user should sync the new managed user block");
+    assert(ftpConfigAfterEdit.includes(`<Option Name="Pass">${md5("ftpSecret456")}</Option>`), "editing FTP should update the hashed password when provided");
     assert(ftpConfigAfterEdit.includes('<Option Name="FileWrite">0</Option>'), "read-only FTP account should disable file writes");
 
     const deleteFtp = await request(port, `/api/ftp/${ftpIndex}`, { method: "DELETE" });

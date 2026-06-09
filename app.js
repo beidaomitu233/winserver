@@ -599,11 +599,12 @@ function setView(view) {
   if (view === "settings" && activeSettings === "config") loadConfigFile(activeConfig);
 }
 
-function field(label, name, value = "", type = "text") {
+function field(label, name, value = "", type = "text", required = true) {
+  const autocomplete = type === "password" ? ' autocomplete="new-password"' : name === "user" ? ' autocomplete="username"' : "";
   return `
     <div class="field">
       <label for="${name}">${label}</label>
-      <input id="${name}" name="${name}" type="${type}" value="${value}" required />
+      <input id="${name}" name="${name}" type="${type}" value="${value}"${autocomplete} ${required ? "required" : ""} />
     </div>
   `;
 }
@@ -648,11 +649,11 @@ function openModal(type, title = "", initial = {}, index = -1) {
     },
     ftp: {
       title: "创建FTP",
-      html: field("用户名", "user", initial.user || "demo_ftp") + field("根目录", "path", initial.path || "D:/phpstudy_pro/WWW/demo") + selectField("权限", "permission", initial.permission || "读写", ["读写", "只读", "只写"])
+      html: field("用户名", "user", initial.user || "demo_ftp") + field("密码", "pass", "123456", "password") + field("根目录", "path", initial.path || "D:/phpstudy_pro/WWW/demo") + selectField("权限", "permission", initial.permission || "读写", ["读写", "只读", "只写"])
     },
     "ftp-edit": {
       title: "编辑FTP",
-      html: field("用户名", "user", initial.user || "") + field("根目录", "path", initial.path || "") + selectField("权限", "permission", initial.permission || "读写", ["读写", "只读", "只写"])
+      html: field("用户名", "user", initial.user || "") + field("新密码", "pass", "", "password", false) + field("根目录", "path", initial.path || "") + selectField("权限", "permission", initial.permission || "读写", ["读写", "只读", "只写"]) + '<p class="modal-note">密码留空时保持原 FTP 密码不变。</p>'
     },
     root: {
       title: "修改root密码",
