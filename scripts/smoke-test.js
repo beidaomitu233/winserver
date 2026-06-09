@@ -410,6 +410,23 @@ async function main() {
     assert(missingImport.statusCode === 500, "importing a missing SQL file should fail");
     assert(missingImport.body.includes("不存在"), "missing SQL response should explain the problem");
 
+    const outsideBackup = path.join(dataDir, "outside.sql");
+    fs.writeFileSync(outsideBackup, "-- outside backup", "utf8");
+    const deleteOutsideBackup = await request(port, "/api/databases/backups/delete", {
+      method: "POST",
+      body: { path: outsideBackup }
+    });
+    assert(deleteOutsideBackup.statusCode === 500, "deleting a SQL file outside the backups dir should fail");
+    assert(fs.existsSync(outsideBackup), "backup delete should not remove files outside the backups dir");
+
+    const deleteBackup = await request(port, "/api/databases/backups/delete", {
+      method: "POST",
+      body: { path: exported.path }
+    });
+    assert(deleteBackup.statusCode === 200, "deleting an exported database backup should return HTTP 200");
+    assert(!fs.existsSync(exported.path), "deleted database backup file should be removed");
+    assert(!JSON.parse(deleteBackup.body).state.databaseBackups.some((item) => item.path === exported.path), "deleted database backup should disappear from state");
+
     const redisOn = await request(port, "/api/services/redis/auto", {
       method: "POST",
       body: { auto: true }

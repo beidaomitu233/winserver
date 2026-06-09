@@ -1302,7 +1302,7 @@ async function exportDatabase(indexValue) {
   const record = databaseRecord(indexValue);
   const db = String(record.db || "").trim();
   if (!db) throw new Error("数据库名不能为空");
-  const backupsDir = path.join(DATA_DIR, "backups");
+  const backupsDir = databaseBackupsDir();
   ensureDir(backupsDir);
   const stamp = compactTimestamp();
   const filePath = path.join(backupsDir, `${safeName(db)}-${stamp}.sql`);
@@ -1325,6 +1325,25 @@ async function exportDatabase(indexValue) {
   return { message, path: toSlash(filePath) };
 }
 
+function databaseBackupsDir() {
+  return path.join(DATA_DIR, "backups");
+}
+
+function resolveDatabaseBackupPath(data) {
+  const raw = String(data.path || data.name || "").trim();
+  if (!raw) throw new Error("备份文件不能为空");
+  const backupsDir = databaseBackupsDir();
+  const resolved = path.resolve(path.isAbsolute(raw) ? raw : path.join(backupsDir, raw));
+  const relative = path.relative(backupsDir, resolved);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("只能操作备份目录中的 SQL 文件");
+  }
+  if (path.extname(resolved).toLowerCase() !== ".sql") throw new Error("只能操作 .sql 备份文件");
+  if (!exists(resolved)) throw new Error(`备份文件不存在：${toSlash(resolved)}`);
+  if (!fs.statSync(resolved).isFile()) throw new Error("备份路径不是文件");
+  return resolved;
+}
+
 async function importDatabase(indexValue, data) {
   const record = databaseRecord(indexValue);
   const db = String(record.db || "").trim();
@@ -1342,8 +1361,16 @@ async function importDatabase(indexValue, data) {
   return { message, path: toSlash(filePath) };
 }
 
+function deleteDatabaseBackup(data) {
+  const filePath = resolveDatabaseBackupPath(data);
+  fs.unlinkSync(filePath);
+  const message = `数据库备份已删除：${toSlash(filePath)}`;
+  addLog(message);
+  return { message, path: toSlash(filePath) };
+}
+
 function listDatabaseBackups() {
-  const backupsDir = path.join(DATA_DIR, "backups");
+  const backupsDir = databaseBackupsDir();
   if (!exists(backupsDir)) return [];
   return fs.readdirSync(backupsDir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".sql"))
@@ -2035,6 +2062,13 @@ async function handleApi(req, res) {
 
     if (req.method === "GET" && requestUrl.pathname === "/api/databases/backups") {
       send(res, 200, { backups: listDatabaseBackups() });
+      return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname === "/api/databases/backups/delete") {
+      const body = await readJsonBody(req);
+      const result = deleteDatabaseBackup(body);
+      send(res, 200, { ok: true, ...result, state: await state() });
       return;
     }
 

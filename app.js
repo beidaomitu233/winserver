@@ -394,6 +394,7 @@ function renderBackups() {
         <button class="manage-button" type="button" data-restore-backup="${escapeHtml(item.path)}">还原</button>
         <button class="manage-button" type="button" data-open-file="${escapeHtml(item.path)}">打开</button>
         <button class="manage-button" type="button" data-open-folder="${escapeHtml(item.path.replace(/[/\\\\][^/\\\\]+$/, ""))}">目录</button>
+        <button class="manage-button danger" type="button" data-delete-backup="${escapeHtml(item.path)}" data-backup-name="${escapeHtml(item.name)}">删除</button>
       </div>
     `)
     .join("");
@@ -850,6 +851,21 @@ function bindEvents() {
     const restoreBackup = event.target.closest("[data-restore-backup]");
     if (restoreBackup) {
       openModal("database-import", "", { databaseIndex: 0, path: restoreBackup.dataset.restoreBackup });
+    }
+
+    const deleteBackup = event.target.closest("[data-delete-backup]");
+    if (deleteBackup) {
+      const label = deleteBackup.dataset.backupName || "该备份";
+      const confirmed = window.confirm(`确认删除数据库备份 ${label}？\n此操作会删除对应的 .sql 文件。`);
+      if (!confirmed) return;
+      if (canUseBackend) {
+        await runBackend(() => postApi("/api/databases/backups/delete", { path: deleteBackup.dataset.deleteBackup }));
+      } else {
+        const index = databaseBackups.findIndex((item) => item.path === deleteBackup.dataset.deleteBackup);
+        if (index >= 0) databaseBackups.splice(index, 1);
+        renderBackups();
+        addLog(`数据库备份已删除：${label}`);
+      }
     }
 
     const editRecord = event.target.closest("[data-edit-record]");
