@@ -760,24 +760,77 @@ async function taskRunning(processName) {
   }
 }
 
-async function processMatchesExecutable(service) {
-  if (!service.processName || !service.exe || !exists(service.exe)) return false;
+function parseWmicProcessRows(stdout) {
+  return String(stdout || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.toLowerCase().startsWith("node,"))
+    .map((line) => {
+      const columns = line.split(",");
+      const pid = Number(columns[columns.length - 1]);
+      const executablePath = columns.slice(1, -1).join(",").trim();
+      return { pid, executablePath };
+    })
+    .filter((row) => Number.isInteger(row.pid) && row.pid > 0);
+}
+
+function parsePowerShellProcessRows(stdout) {
+  const text = String(stdout || "").trim();
+  if (!text) return [];
+  const parsed = JSON.parse(text);
+  return (Array.isArray(parsed) ? parsed : [parsed])
+    .filter(Boolean)
+    .map((item) => ({ pid: Number(item.ProcessId), executablePath: String(item.ExecutablePath || "").trim() }))
+    .filter((row) => Number.isInteger(row.pid) && row.pid > 0);
+}
+
+function processRowMatchesExecutable(row, executablePath) {
+  const expected = normalizePathText(executablePath);
+  return !!expected && normalizePathText(row.executablePath) === expected;
+}
+
+async function queryProcessRows(processName) {
+  if (!processName) return [];
+  const wqlName = String(processName).replace(/'/g, "''");
   try {
     const { stdout } = await execFileAsync("wmic.exe", [
       "process",
       "where",
-      `name='${service.processName.replace(/'/g, "''")}'`,
+      `name='${wqlName}'`,
       "get",
-      "ExecutablePath,CommandLine",
+      "ExecutablePath,ProcessId",
       "/format:csv"
     ]);
-    const expected = normalizePathText(service.exe);
-    return stdout
-      .split(/\r?\n/)
-      .some((line) => normalizePathText(line).includes(expected));
+    const rows = parseWmicProcessRows(stdout);
+    if (rows.some((row) => row.executablePath)) return rows;
   } catch {
-    return false;
+    // Fall back to PowerShell below. WMIC is optional on newer Windows builds.
   }
+
+  try {
+    const command = `$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process -Filter "Name='${wqlName}'" | Select-Object ProcessId,ExecutablePath | ConvertTo-Json -Compress`;
+    const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]);
+    return parsePowerShellProcessRows(stdout);
+  } catch {
+    return [];
+  }
+}
+
+async function matchingProcessIds(service) {
+  if (!service.processName || !service.exe) return [];
+  const rows = await queryProcessRows(service.processName);
+  return rows
+    .filter((row) => processRowMatchesExecutable(row, service.exe))
+    .map((row) => row.pid);
+}
+
+function taskkillProcessAbsent(error) {
+  const text = String(error?.stdout || "") + String(error?.stderr || "") + String(error?.message || "");
+  return /not found|没有找到|找不到|不存在/i.test(text);
+}
+
+async function processMatchesExecutable(service) {
+  return (await matchingProcessIds(service)).length > 0;
 }
 
 async function serviceRunning(service) {
@@ -825,15 +878,16 @@ async function stopService(service) {
       await execFileAsync(service.exe, ["-p", service.cwd, "-s", "quit"], { cwd: service.cwd });
       await new Promise((resolve) => setTimeout(resolve, 700));
     } catch {
-      // fallback below
+      // Fall back to PID-based termination below.
     }
   }
 
-  try {
-    await execFileAsync("taskkill.exe", ["/F", "/T", "/IM", service.processName]);
-  } catch (error) {
-    if (!String(error.stdout || error.stderr || "").includes("not found")) {
-      // taskkill returns non-zero when the process is absent; surface other cases.
+  const pids = await matchingProcessIds(service);
+  for (const pid of pids) {
+    try {
+      await execFileAsync("taskkill.exe", ["/F", "/T", "/PID", String(pid)]);
+    } catch (error) {
+      if (!taskkillProcessAbsent(error)) throw error;
     }
   }
   addLog(`${service.name} 已停止`);
