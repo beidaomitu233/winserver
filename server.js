@@ -70,6 +70,57 @@ function execFileAsync(file, args = [], options = {}) {
   });
 }
 
+function execFileWithInputFile(file, args = [], inputPath, options = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let stdout = "";
+    let stderr = "";
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error);
+      else resolve(result);
+    };
+    const child = spawn(file, args, { windowsHide: true, stdio: ["pipe", "pipe", "pipe"], ...options });
+    const input = fs.createReadStream(inputPath);
+    const append = (target, chunk) => {
+      const next = target + chunk.toString();
+      if (next.length > 5 * 1024 * 1024) {
+        child.kill();
+        const error = new Error("命令输出过大");
+        error.stdout = stdout;
+        error.stderr = stderr;
+        finish(error);
+        return target;
+      }
+      return next;
+    };
+    child.stdout.on("data", (chunk) => {
+      stdout = append(stdout, chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr = append(stderr, chunk);
+    });
+    child.on("error", finish);
+    child.on("close", (code) => {
+      if (code === 0) {
+        finish(null, { stdout, stderr });
+        return;
+      }
+      const error = new Error(`${path.basename(file)} 执行失败，退出码 ${code}`);
+      error.stdout = stdout;
+      error.stderr = stderr;
+      finish(error);
+    });
+    input.on("error", (error) => {
+      child.kill();
+      finish(error);
+    });
+    child.stdin.on("error", () => {});
+    input.pipe(child.stdin);
+  });
+}
+
 function detectPaths() {
   const phpStudyRoot = process.env.XPCN_PHPSTUDY || (exists("D:/phpstudy_pro") ? "D:/phpstudy_pro" : path.join(RUNTIME_DIR, "phpstudy_pro"));
   const ext = path.join(phpStudyRoot, "Extensions");
@@ -1106,6 +1157,14 @@ function mysqlArgs(service, sql, passwordOverride) {
   return args;
 }
 
+function mysqlImportArgs(service, db, passwordOverride) {
+  const args = ["-uroot"];
+  const password = passwordOverride ?? config.mysqlRootPassword;
+  if (password) args.push(`-p${password}`);
+  args.push("-P", String(service.port || 3306), "-h", "127.0.0.1", db);
+  return args;
+}
+
 function mysqlService() {
   const preferred = ["mysql80", "mariadb", "mysql57"]
     .map((id) => config.services.find((item) => item.id === id))
@@ -1130,6 +1189,24 @@ function assertUniqueDatabase(db) {
   if (findDatabaseConflict(db) >= 0) {
     throw new Error(`数据库 ${db} 已存在`);
   }
+}
+
+function databaseRecord(indexValue) {
+  const index = Number(indexValue);
+  if (!Number.isInteger(index) || index < 0 || index >= config.databases.length) {
+    throw new Error("数据库记录不存在");
+  }
+  return config.databases[index];
+}
+
+function resolveSqlFile(filePath) {
+  const raw = String(filePath || "").trim();
+  if (!raw) throw new Error("SQL 文件路径不能为空");
+  const resolved = path.resolve(raw);
+  if (!exists(resolved)) throw new Error(`SQL 文件不存在：${toSlash(resolved)}`);
+  if (!fs.statSync(resolved).isFile()) throw new Error("SQL 文件路径不是文件");
+  if (path.extname(resolved).toLowerCase() !== ".sql") throw new Error("只能导入 .sql 文件");
+  return resolved;
 }
 
 async function createDatabase(data) {
@@ -1168,11 +1245,7 @@ async function changeRootPassword(data) {
 }
 
 async function exportDatabase(indexValue) {
-  const index = Number(indexValue);
-  if (!Number.isInteger(index) || index < 0 || index >= config.databases.length) {
-    throw new Error("数据库记录不存在");
-  }
-  const record = config.databases[index];
+  const record = databaseRecord(indexValue);
   const db = String(record.db || "").trim();
   if (!db) throw new Error("数据库名不能为空");
   const backupsDir = path.join(DATA_DIR, "backups");
@@ -1194,6 +1267,23 @@ async function exportDatabase(indexValue) {
   }
 
   const message = `数据库 ${db} 已导出：${toSlash(filePath)}`;
+  addLog(message);
+  return { message, path: toSlash(filePath) };
+}
+
+async function importDatabase(indexValue, data) {
+  const record = databaseRecord(indexValue);
+  const db = String(record.db || "").trim();
+  if (!db) throw new Error("数据库名不能为空");
+  const filePath = resolveSqlFile(data.path || data.file || data.backupPath);
+
+  if (!SERVICE_DRY_RUN) {
+    const service = mysqlService();
+    if (!service || !exists(service.clientExe)) throw new Error("未找到 mysql.exe，无法导入数据库");
+    await execFileWithInputFile(service.clientExe, mysqlImportArgs(service, db), filePath);
+  }
+
+  const message = `数据库 ${db} 已导入：${toSlash(filePath)}`;
   addLog(message);
   return { message, path: toSlash(filePath) };
 }
@@ -1896,6 +1986,13 @@ async function handleApi(req, res) {
 
     if (req.method === "POST" && parts[1] === "databases" && parts[3] === "export" && parts.length === 4) {
       const result = await exportDatabase(parts[2]);
+      send(res, 200, { ok: true, ...result, state: await state() });
+      return;
+    }
+
+    if (req.method === "POST" && parts[1] === "databases" && parts[3] === "import" && parts.length === 4) {
+      const body = await readJsonBody(req);
+      const result = await importDatabase(parts[2], body);
       send(res, 200, { ok: true, ...result, state: await state() });
       return;
     }

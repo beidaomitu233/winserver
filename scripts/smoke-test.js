@@ -396,6 +396,20 @@ async function main() {
     assert(backups.statusCode === 200, "listing database backups should return HTTP 200");
     assert(JSON.parse(backups.body).backups.some((item) => item.path === exported.path), "database backup list should include the exported file");
 
+    const importRoot = await request(port, "/api/databases/0/import", {
+      method: "POST",
+      body: { path: exported.path }
+    });
+    assert(importRoot.statusCode === 200, "importing an existing SQL file should return HTTP 200");
+    assert(JSON.parse(importRoot.body).message.includes("已导入"), "database import should report success");
+
+    const missingImport = await request(port, "/api/databases/0/import", {
+      method: "POST",
+      body: { path: path.join(dataDir, "missing.sql") }
+    });
+    assert(missingImport.statusCode === 500, "importing a missing SQL file should fail");
+    assert(missingImport.body.includes("不存在"), "missing SQL response should explain the problem");
+
     const redisOn = await request(port, "/api/services/redis/auto", {
       method: "POST",
       body: { auto: true }

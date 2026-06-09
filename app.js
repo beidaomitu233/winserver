@@ -342,6 +342,7 @@ function renderRows(kind, query = "") {
         <td><div class="row-actions">
           <button class="manage-button" type="button" data-open-url="${escapeHtml(phpMyAdminUrl())}">phpMyAdmin</button>
           <button class="manage-button" type="button" data-export-database="${index}" data-record-label="${escapeHtml(item.db)}">导出</button>
+          <button class="manage-button" type="button" data-import-database="${index}">导入</button>
           <button class="manage-button" type="button" data-row-note="数据库 ${escapeHtml(item.db)} 可通过 phpMyAdmin 或 mysql 客户端做导入、导出、删除等高风险操作。">说明</button>
           <button class="manage-button danger" type="button" data-remove-record="databases" data-record-index="${index}" data-record-label="${escapeHtml(item.db)}">移除</button>
         </div></td>
@@ -390,6 +391,7 @@ function renderBackups() {
       <div class="backup-row">
         <span class="backup-name" title="${escapeHtml(item.path)}">${escapeHtml(item.name)}</span>
         <span>${formatBytes(item.size)}</span>
+        <button class="manage-button" type="button" data-restore-backup="${escapeHtml(item.path)}">还原</button>
         <button class="manage-button" type="button" data-open-file="${escapeHtml(item.path)}">打开</button>
         <button class="manage-button" type="button" data-open-folder="${escapeHtml(item.path.replace(/[/\\\\][^/\\\\]+$/, ""))}">目录</button>
       </div>
@@ -606,11 +608,12 @@ function field(label, name, value = "", type = "text") {
 }
 
 function selectField(label, name, value = "", options = []) {
+  const normalized = options.map((option) => typeof option === "object" ? option : { value: option, label: option });
   return `
     <div class="field">
       <label for="${name}">${label}</label>
       <select id="${name}" name="${name}" required>
-        ${options.map((option) => `<option value="${escapeHtml(option)}" ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+        ${normalized.map((option) => `<option value="${escapeHtml(option.value)}" ${String(option.value) === String(value) ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
       </select>
     </div>
   `;
@@ -621,6 +624,7 @@ function openModal(type, title = "", initial = {}, index = -1) {
   modalIndex = index;
   const modalTitle = $("#modalTitle");
   const fields = $("#modalFields");
+  const databaseOptions = databases.map((item, itemIndex) => ({ value: String(itemIndex), label: item.db || `数据库${itemIndex + 1}` }));
 
   const templates = {
     site: {
@@ -634,6 +638,12 @@ function openModal(type, title = "", initial = {}, index = -1) {
     database: {
       title: "创建数据库",
       html: field("数据库", "db", "demo_app") + field("用户", "user", "demo_app") + field("密码", "pass", "123456", "password")
+    },
+    "database-import": {
+      title: "导入SQL",
+      html: selectField("目标库", "databaseIndex", String(initial.databaseIndex ?? 0), databaseOptions)
+        + field("SQL文件", "path", initial.path || "D:/backup/demo.sql")
+        + '<p class="modal-note">会将 SQL 文件导入目标数据库；导入前请确认文件和目标库匹配。</p>'
     },
     ftp: {
       title: "创建FTP",
@@ -678,6 +688,7 @@ async function handleModalSubmit(event) {
       if (modalType === "site") await postApi("/api/sites", data);
       if (modalType === "site-edit") await api(`/api/sites/${modalIndex}`, { method: "PUT", body: JSON.stringify(data) }).then((result) => result.state ? applyState(result.state) : result);
       if (modalType === "database") await postApi("/api/databases", data);
+      if (modalType === "database-import") await postApi(`/api/databases/${Number(data.databaseIndex)}/import`, { path: data.path });
       if (modalType === "ftp") await postApi("/api/ftp", data);
       if (modalType === "ftp-edit") await api(`/api/ftp/${modalIndex}`, { method: "PUT", body: JSON.stringify(data) }).then((result) => result.state ? applyState(result.state) : result);
       if (modalType === "root") await postApi("/api/databases/root-password", data);
@@ -700,6 +711,7 @@ async function handleModalSubmit(event) {
       renderRows("database");
       addLog(`数据库 ${data.db} 已创建`);
     }
+    if (modalType === "database-import") addLog(`数据库 ${databases[Number(data.databaseIndex)]?.db || data.databaseIndex} 已导入：${data.path}`);
     if (modalType === "ftp") {
       ftpAccounts.push({ user: data.user, path: data.path, permission: data.permission, status: "正常" });
       renderRows("ftp");
@@ -826,6 +838,18 @@ function bindEvents() {
       } else {
         addLog(`数据库 ${exportDatabase.dataset.recordLabel || index} 已准备导出`);
       }
+    }
+
+    const importDatabase = event.target.closest("[data-import-database]");
+    if (importDatabase) {
+      const index = Number(importDatabase.dataset.importDatabase);
+      if (!Number.isInteger(index)) return;
+      openModal("database-import", "", { databaseIndex: index });
+    }
+
+    const restoreBackup = event.target.closest("[data-restore-backup]");
+    if (restoreBackup) {
+      openModal("database-import", "", { databaseIndex: 0, path: restoreBackup.dataset.restoreBackup });
     }
 
     const editRecord = event.target.closest("[data-edit-record]");

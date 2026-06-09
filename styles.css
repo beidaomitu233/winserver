@@ -645,7 +645,7 @@ tbody td.path {
 }
 
 .backup-row {
-  grid-template-columns: minmax(0, 1fr) 80px auto auto;
+  grid-template-columns: minmax(0, 1fr) 80px auto auto auto;
   min-height: 44px;
   padding: 0 18px;
   border-bottom: 1px solid var(--line);
