@@ -1,16 +1,32 @@
 {
-  "name": "xpcn-local-manager",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Local XP.CN-style Windows web environment manager",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js",
-    "check": "node --check server.js && node --check app.js && node --check scripts/app-logic-test.js && node --check scripts/server-logic-test.js && node --check scripts/smoke-test.js",
-    "test": "node scripts/app-logic-test.js && node scripts/server-logic-test.js && node scripts/smoke-test.js"
-  },
-  "engines": {
-    "node": ">=18"
-  }
+    "name":  "winserver",
+    "version":  "0.2.0",
+    "private":  true,
+    "description":  "WinServer Cloud Stack Desktop",
+    "scripts":  {
+                    "dev":  "cd frontend \u0026\u0026 npm run dev",
+                    "build":  "cd frontend \u0026\u0026 npm run build",
+                    "tauri:dev":  "cd frontend \u0026\u0026 npm run tauri dev",
+                    "tauri:build":  "cd frontend \u0026\u0026 npm run tauri build",
+                    "test":  "node tests/run-all.js",
+                    "test:backend":  "cargo test --test api_integration -- --nocapture",
+                    "test:unit":  "cargo test --lib -- --nocapture",
+                    "test:e2e":  "npx playwright test",
+                    "test:report":  "start test-results/index.html",
+                    "test:e2e:runner":  "node tests/run-e2e.js",
+                    "test:e2e:skip":  "node tests/run-e2e.js --skip-start",
+                    "test:e2e:pages":  "node tests/run-e2e.js --skip-start --pages"
+                },
+    "directories":  {
+                        "doc":  "docs",
+                        "test":  "tests"
+                    },
+    "keywords":  [
+
+                 ],
+    "author":  "",
+    "license":  "ISC",
+    "devDependencies":  {
+                            "@playwright/test":  "^1.60.0"
+                        }
 }

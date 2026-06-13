@@ -1,9 +1,15 @@
 # Local tool/runtime caches
+.claude/
 .tools/
 bin/
 dist/
 test-results/
+playwright-report/
 output/
+runtime/
+
+# Rust build
+target/
 
 # Build outputs
 **/bin/

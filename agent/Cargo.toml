@@ -1,0 +1,30 @@
+[package]
+name = "winserver-agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+shared = { package = "winserver-shared", path = "../shared" }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+thiserror = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+handlebars = "6"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+sysinfo = "0.33"
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls", "stream"], default-features = false }
+zip = "2"
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_Pipes",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+    "Win32_System_JobObjects",
+    "Win32_Security",
+] }
