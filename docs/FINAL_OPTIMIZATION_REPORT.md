@@ -2,7 +2,7 @@
 
 生成日期：2026-06-13  
 分支：`fix/fullstack-review-optimization`  
-提交信息：`fix(fullstack): resolve review issues`
+主修复提交：`6e9fe50 fix(fullstack): resolve review issues`
 
 ## 1. 修复范围
 
@@ -116,7 +116,8 @@
 ## 11. Git 状态
 
 - 当前分支：`fix/fullstack-review-optimization`
-- 预期提交：`fix(fullstack): resolve review issues`
+- 主修复提交：`6e9fe50 fix(fullstack): resolve review issues`
+- 文档补充提交：`docs(fullstack): update optimization report`
 - 注意：本仓库当前包含大量既有未跟踪 Rust/Vue 工程文件和旧桌面文件删除。为了提交可构建状态，需要整体纳入当前工程结构；`.claude/`、`test-results/`、`playwright-report/` 等本地产物已忽略。
 
 ## 12. 是否建议最终验收
