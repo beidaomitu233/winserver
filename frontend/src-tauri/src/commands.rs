@@ -31,6 +31,15 @@ pub async fn get_state(state: State<'_, Arc<App>>) -> Result<serde_json::Value, 
     call_handler(&state, "state.get", json!({})).await
 }
 
+/// Report background auto-setup progress so the frontend can render an
+/// initialization splash instead of freezing the window.
+#[tauri::command]
+pub async fn app_init_status(state: State<'_, Arc<App>>) -> Result<serde_json::Value, String> {
+    let phase = state.init_state.phase().await;
+    let ready = state.init_state.ready();
+    Ok(json!({ "phase": phase, "ready": ready }))
+}
+
 #[tauri::command]
 pub async fn service_start(state: State<'_, Arc<App>>, service_id: String) -> Result<serde_json::Value, String> {
     call_handler(&state, "service.start", json!({ "serviceId": service_id })).await
@@ -154,6 +163,28 @@ pub async fn get_config_file(state: State<'_, Arc<App>>, file_id: String) -> Res
 #[tauri::command]
 pub async fn save_config_file(state: State<'_, Arc<App>>, file_id: String, content: String) -> Result<serde_json::Value, String> {
     call_handler(&state, "config.save", json!({ "fileId": file_id, "content": content })).await
+}
+
+#[tauri::command]
+pub async fn redis_config_get(state: State<'_, Arc<App>>) -> Result<serde_json::Value, String> {
+    call_handler(&state, "redis.config.get", json!({})).await
+}
+
+#[tauri::command]
+pub async fn redis_config_save(state: State<'_, Arc<App>>, params: String) -> Result<serde_json::Value, String> {
+    let params_value: serde_json::Value = serde_json::from_str(&params).map_err(|e| e.to_string())?;
+    call_handler(&state, "redis.config.save", params_value).await
+}
+
+#[tauri::command]
+pub async fn minio_config_get(state: State<'_, Arc<App>>) -> Result<serde_json::Value, String> {
+    call_handler(&state, "minio.config.get", json!({})).await
+}
+
+#[tauri::command]
+pub async fn minio_config_save(state: State<'_, Arc<App>>, params: String) -> Result<serde_json::Value, String> {
+    let params_value: serde_json::Value = serde_json::from_str(&params).map_err(|e| e.to_string())?;
+    call_handler(&state, "minio.config.save", params_value).await
 }
 
 #[tauri::command]

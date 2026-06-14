@@ -19,9 +19,10 @@ pub fn run() {
             let resource_dir = app.path().resource_dir()
                 .unwrap_or_else(|_| app_dir.clone());
 
-            let app_state = Arc::new(app_state::init_app(app_dir, resource_dir));
+            let app_state = Arc::new(app_state::init_app(app_dir.clone(), resource_dir.clone()));
             let pm = app_state.process_manager.clone();
 
+            let managed = app_state.clone();
             app.manage(app_state);
 
             // Start health monitor
@@ -29,9 +30,15 @@ pub fn run() {
                 pm.start_health_monitor_async().await;
             });
 
+            // Kick off the heavier local-service detection + bundled runtime
+            // install on a background task so the window renders immediately.
+            // The frontend polls `app_init_status` and shows a splash until ready.
+            app_state::run_auto_setup_async(&managed, app_dir, resource_dir);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::app_init_status,
             commands::get_state,
             commands::service_start,
             commands::service_stop,
@@ -53,6 +60,10 @@ pub fn run() {
             commands::clear_logs,
             commands::get_config_file,
             commands::save_config_file,
+            commands::redis_config_get,
+            commands::redis_config_save,
+            commands::minio_config_get,
+            commands::minio_config_save,
             commands::db_create,
             commands::db_delete,
             commands::db_change_password,

@@ -38,8 +38,9 @@
     "resources": [
       "../../runtime/nginx-1.26.3.zip",
       "../../runtime/mysql-8.0.12-winx64.zip",
-      "../../runtime/redis-7.2.4.zip",
-      "../../runtime/minio.exe"
+      "../../runtime/redis-7.2.4/redis-server.exe",
+      "../../runtime/redis-7.2.4/redis-cli.exe",
+      "../../runtime/minio/minio.exe"
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"

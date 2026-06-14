@@ -432,6 +432,18 @@ impl Database {
         })
     }
 
+    /// Update a service's listening port (e.g. after editing redis/minio config).
+    pub fn update_service_port(&self, service_id: &str, port: u16) -> anyhow::Result<()> {
+        self.conn(|conn| {
+            let now = chrono::Utc::now().to_rfc3339();
+            conn.execute(
+                "UPDATE service_instances SET port = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![port as i32, &now, service_id],
+            )?;
+            Ok(())
+        })
+    }
+
     /// Mark a service as failed and keep a user-facing error message.
     pub fn update_service_failure(
         &self,

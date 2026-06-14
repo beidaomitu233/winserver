@@ -1,7 +1,6 @@
 use std::fs;
 use std::io::{Read as IoRead, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -118,6 +117,26 @@ impl RuntimeManager {
 
         info!("install_bundled_runtime: software_id={}, service_id={}, runtime_dir={}", software_id, service_id, runtime_dir.display());
 
+        // If the target already exists AND the service is already registered as
+        // installed, this is a no-op re-run (e.g. app relaunch). Skip all DB
+        // writes and logging so we don't spam operation_logs on every startup.
+        if target_dir.exists() {
+            let already_installed = self.db.get_software(software_id).map(|sw| sw.installed).unwrap_or(false);
+            if already_installed {
+                info!("install_bundled_runtime: target_dir exists and software already installed, skipping (no-op)");
+                let install_path_str = target_dir.to_string_lossy().to_string();
+                return Ok(RuntimeManifest {
+                    id: software_id.to_string(),
+                    runtime_type: RuntimeType::Nginx,
+                    version: "unknown".to_string(),
+                    install_path: install_path_str,
+                    entrypoint: String::new(),
+                    config_template: None,
+                    installed: true,
+                });
+            }
+        }
+
         if target_dir.exists() {
             info!("install_bundled_runtime: target_dir already exists, skipping extraction");
         } else {
@@ -128,9 +147,14 @@ impl RuntimeManager {
             match bundled_file {
                 Some(path) => {
                     let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                    info!("install_bundled_runtime: found bundled file: {}", file_name);
+                    info!("install_bundled_runtime: found bundled entry: {}", file_name);
 
-                    if file_name.to_lowercase().ends_with(".exe") {
+                    if path.is_dir() {
+                        // Bundled directory layout (e.g. runtime/redis-7.2.4/) —
+                        // copy its contents into the target dir verbatim.
+                        copy_dir_contents(&path, &target_dir)?;
+                        info!("install_bundled_runtime: copied dir contents to {}", target_dir.display());
+                    } else if file_name.to_lowercase().ends_with(".exe") {
                         let dest = target_dir.join(&file_name);
                         fs::copy(&path, &dest).context("failed to copy bundled exe")?;
                         info!("install_bundled_runtime: copied exe to {}", dest.display());
@@ -192,6 +216,8 @@ impl RuntimeManager {
     }
 
     /// Find the bundled file for a software ID in the runtime directory.
+    /// Prefers an unpacked directory (e.g. `redis-7.2.4/`) over a zip archive,
+    /// so pre-assembled runtime folders win over zips when both exist.
     pub fn find_bundled_file(&self, software_id: &str, runtime_dir: &Path) -> Option<PathBuf> {
         if !runtime_dir.exists() {
             return None;
@@ -206,17 +232,24 @@ impl RuntimeManager {
             _ => vec![software_id],
         };
 
+        let mut dir_match: Option<PathBuf> = None;
+        let mut file_match: Option<PathBuf> = None;
         if let Ok(entries) = fs::read_dir(runtime_dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_lowercase();
                 for prefix in &prefixes {
                     if name.starts_with(prefix) {
-                        return Some(entry.path());
+                        if entry.path().is_dir() {
+                            dir_match.get_or_insert(entry.path());
+                        } else {
+                            file_match.get_or_insert(entry.path());
+                        }
+                        break;
                     }
                 }
             }
         }
-        None
+        dir_match.or(file_match)
     }
 
     /// Extract a zip file to a target directory, stripping the top-level dir if present.
@@ -315,7 +348,7 @@ default-character-set=utf8
         }
 
         // Run mysqld --initialize-insecure
-        let output = Command::new(&mysqld_exe)
+        let output = silent_command_path(&mysqld_exe)
             .args(["--initialize-insecure", "--console"])
             .current_dir(install_dir)
             .stdout(std::process::Stdio::piped())
@@ -367,7 +400,7 @@ default-character-set=utf8
 
             // If not found in explicit dirs, check PATH
             if !found.contains_key(*service_id) && !dirs.is_empty() {
-                if let Ok(output) = Command::new("where").arg(marker).output() {
+                if let Ok(output) = silent_command("where").arg(marker).output() {
                     if output.status.success() {
                         let path_str = String::from_utf8_lossy(&output.stdout);
                         if let Some(first_line) = path_str.lines().next() {
@@ -619,6 +652,12 @@ default-character-set=utf8
             "redis" => {
                 let exe_path = install_dir.join("redis-server.exe");
                 let conf_path = install_dir.join("redis.conf");
+                // Ensure a default redis.conf exists so users always have an
+                // editable config (both visual form and direct-file editing).
+                if !conf_path.exists() {
+                    let _ = fs::write(&conf_path, default_redis_conf());
+                    info!("register_generic_service: wrote default redis.conf at {}", conf_path.display());
+                }
                 let exe_str = exe_path.to_string_lossy().replace('\\', "/");
                 let conf_str = conf_path.to_string_lossy().replace('\\', "/");
                 let args = if conf_path.exists() {
@@ -626,16 +665,27 @@ default-character-set=utf8
                 } else {
                     String::new()
                 };
+                // Register the config file so it appears in the config editor.
+                let _ = self.db.upsert_config_file("redis.conf", "redis.conf", &conf_str);
                 (exe_str, args, conf_str)
             }
             "minio" => {
                 let exe_path = install_dir.join("minio.exe");
                 let data_path = install_dir.join("data");
                 let _ = fs::create_dir_all(&data_path);
+                // Ensure a default minio.env exists (root credentials + ports).
+                let env_path = install_dir.join("minio.env");
+                if !env_path.exists() {
+                    let _ = fs::write(&env_path, default_minio_env());
+                    info!("register_generic_service: wrote default minio.env at {}", env_path.display());
+                }
                 let exe_str = exe_path.to_string_lossy().replace('\\', "/");
                 let data_str = data_path.to_string_lossy().replace('\\', "/");
                 let args = format!("server {} --console-address :9001", data_str);
-                (exe_str, args, String::new())
+                let env_str = env_path.to_string_lossy().replace('\\', "/");
+                // Register the config file so it appears in the config editor.
+                let _ = self.db.upsert_config_file("minio.env", "minio.env", &env_str);
+                (exe_str, args, env_str)
             }
             "mysql80" | "mysql57" => {
                 let exe_path = install_dir.join("bin").join("mysqld.exe");
@@ -1034,8 +1084,40 @@ fn ensure_file(path: &Path, label: &str) -> Result<()> {
     Ok(())
 }
 
+/// Build a `Command` that never flashes a console window on Windows.
+/// We use this for every helper subprocess (version probes, `where`, mysqld
+/// initialization) so that service setup is fully silent.
+fn silent_command(program: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+    let _ = &mut cmd; // silence unused-mut on non-windows
+    cmd
+}
+
+/// Build a silent `Command` from a `Path` (overload for `&Path` exe paths).
+fn silent_command_path(exe: &Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new(exe);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+    let _ = &mut cmd;
+    cmd
+}
+
 fn run_version_command(exe: &Path, args: &[&str]) -> Result<String> {
-    let output = Command::new(exe)
+    let output = silent_command_path(exe)
         .args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -1100,6 +1182,63 @@ fn sanitize_id(value: &str) -> String {
     } else {
         trimmed
     }
+}
+
+/// Default redis.conf written when registering the redis service, so users
+/// always have an editable config. Fields here drive the visual config form.
+fn default_redis_conf() -> String {
+    r#"# Redis configuration (managed by WinServer)
+# Editable via WinServer visual config or this file directly.
+
+port 6379
+bind 127.0.0.1
+protected-mode yes
+# requirepass <password>     # uncomment and set to enable authentication
+maxmemory 256mb
+maxmemory-policy allkeys-lru
+appendonly no
+save ""
+rdbchecksum no
+"#
+    .to_string()
+}
+
+/// Default minio.env written when registering the minio service.
+/// Holds the MinIO root credentials read at startup.
+fn default_minio_env() -> String {
+    r#"# MinIO configuration (managed by WinServer)
+# Editable via WinServer visual config or this file directly.
+
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=minioadmin
+MINIO_API_PORT=9000
+MINIO_CONSOLE_PORT=9001
+"#
+    .to_string()
+}
+
+/// Recursively copy the contents of `src` into `dst` (preserving relative paths).
+/// Used when a bundled runtime ships as an unpacked directory.
+fn copy_dir_contents(src: &Path, dst: &Path) -> Result<()> {
+    fs::create_dir_all(dst)?;
+    let stack: Vec<(std::path::PathBuf, std::path::PathBuf)> =
+        vec![(src.to_path_buf(), dst.to_path_buf())];
+    let mut work = stack;
+    while let Some((from, to)) = work.pop() {
+        fs::create_dir_all(&to)?;
+        for entry in fs::read_dir(&from)? {
+            let entry = entry?;
+            let from_path = entry.path();
+            let to_path = to.join(entry.file_name());
+            if from_path.is_dir() {
+                work.push((from_path, to_path));
+            } else {
+                fs::copy(&from_path, &to_path)
+                    .with_context(|| format!("failed to copy {}", from_path.display()))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Tracks download/install progress for a software download operation.

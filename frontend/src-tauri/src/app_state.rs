@@ -1,4 +1,6 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::sync::Mutex;
 use winserver_agent::database::Database;
 use winserver_agent::managers::{
     ProcessManager, SiteManager, PortManager, HostsManager, RuntimeManager,
@@ -10,40 +12,54 @@ use tracing::{info, warn};
 pub struct App {
     pub handler: Arc<RequestHandler>,
     pub process_manager: Arc<ProcessManager>,
+    pub init_state: Arc<InitState>,
 }
 
-/// Initialize the app with the given directories.
-/// `app_dir` = directory containing the exe (and possibly runtime/ resources)
-/// `resource_dir` = Tauri's resource directory (where bundled resources are placed)
-pub fn init_app(app_dir: PathBuf, resource_dir: PathBuf) -> App {
-    // Use a writable data directory: prefer app_dir/data, fall back to LOCALAPPDATA/WinServer
-    let data_dir = {
-        let preferred = app_dir.join("data");
-        if std::fs::create_dir_all(&preferred).is_ok() {
-            // Test write access
-            let test_file = preferred.join(".write_test");
-            if std::fs::write(&test_file, b"test").is_ok() {
-                let _ = std::fs::remove_file(&test_file);
-                preferred
-            } else {
-                info!("init_app: app_dir/data is not writable, falling back to LOCALAPPDATA");
-                let local_app_data = std::env::var("LOCALAPPDATA")
-                    .map(|p| PathBuf::from(p))
-                    .unwrap_or_else(|_| preferred.clone());
-                let fallback = local_app_data.join("WinServer").join("data");
-                let _ = std::fs::create_dir_all(&fallback);
-                fallback
-            }
-        } else {
-            info!("init_app: cannot create app_dir/data, falling back to LOCALAPPDATA");
-            let local_app_data = std::env::var("LOCALAPPDATA")
-                .map(|p| PathBuf::from(p))
-                .unwrap_or_else(|_| preferred.clone());
-            let fallback = local_app_data.join("WinServer").join("data");
-            let _ = std::fs::create_dir_all(&fallback);
-            fallback
+/// Tracks the progress of background service auto-setup so the frontend can
+/// render an initialization splash instead of freezing the window.
+pub struct InitState {
+    phase: Mutex<String>,
+    ready: AtomicBool,
+}
+
+impl InitState {
+    pub fn new() -> Self {
+        Self {
+            phase: Mutex::new("pending".to_string()),
+            ready: AtomicBool::new(false),
         }
-    };
+    }
+
+    pub async fn phase(&self) -> String {
+        self.phase.lock().await.clone()
+    }
+
+    pub fn ready(&self) -> bool {
+        self.ready.load(Ordering::SeqCst)
+    }
+
+    async fn set_phase(&self, phase: &str) {
+        let mut guard = self.phase.lock().await;
+        *guard = phase.to_string();
+    }
+
+    fn set_ready(&self) {
+        self.ready.store(true, Ordering::SeqCst);
+    }
+}
+
+impl Default for InitState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Synchronous, fast initialization: opens the database, builds managers and the
+/// request handler. This must return quickly so the Tauri window can render and
+/// become interactive. The heavier auto-setup work (local service detection +
+/// bundled runtime install) runs later via `run_auto_setup_async`.
+pub fn init_app(app_dir: PathBuf, resource_dir: PathBuf) -> App {
+    let data_dir = resolve_data_dir(&app_dir);
 
     let db = Arc::new(Database::new(&data_dir.join("winserver.db")).expect("Failed to open database"));
     db.run_migrations().expect("Failed to run migrations");
@@ -63,11 +79,75 @@ pub fn init_app(app_dir: PathBuf, resource_dir: PathBuf) -> App {
     ).expect("Failed to create SiteManager"));
     let runtime_manager = Arc::new(RuntimeManager::new(data_dir.clone(), db.clone()));
 
-    // Detect local services and install bundled runtimes on first launch
-    // Try resource_dir first (Tauri bundled), then fall back to app_dir/runtime/
-    let runtime_dir = if resource_dir.join("nginx-1.26.3.zip").exists() || resource_dir.join("minio.exe").exists() {
+    let runtime_dir = resolve_runtime_dir(&app_dir, &resource_dir);
+
+    let handler = Arc::new(RequestHandler::new(
+        db,
+        process_manager.clone(),
+        site_manager,
+        port_manager,
+        hosts_manager,
+        runtime_manager,
+        runtime_dir.clone(),
+    ));
+
+    App {
+        handler,
+        process_manager,
+        init_state: Arc::new(InitState::new()),
+    }
+}
+
+/// Run the (potentially slow) local-service detection and bundled-runtime install
+/// on a background task. Updates `init_state` so the frontend splash can reflect
+/// progress and know when setup is complete.
+pub fn run_auto_setup_async(app: &App, app_dir: PathBuf, resource_dir: PathBuf) {
+    let init_state = app.init_state.clone();
+    let handler = app.handler.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let runtime_dir = resolve_runtime_dir(&app_dir, &resource_dir);
+
+        init_state.set_phase("detecting").await;
+        info!("run_auto_setup_async: starting local service detection");
+
+        let result = handler.run_auto_setup(&runtime_dir).await;
+
+        match &result {
+            Ok(()) => info!("run_auto_setup_async: completed successfully"),
+            Err(e) => warn!("run_auto_setup_async: completed with errors: {}", e),
+        }
+
+        init_state.set_phase("ready").await;
+        init_state.set_ready();
+    });
+}
+
+/// Resolve a writable data directory: prefer app_dir/data, fall back to LOCALAPPDATA.
+fn resolve_data_dir(app_dir: &std::path::Path) -> PathBuf {
+    let preferred = app_dir.join("data");
+    if std::fs::create_dir_all(&preferred).is_ok() {
+        let test_file = preferred.join(".write_test");
+        if std::fs::write(&test_file, b"test").is_ok() {
+            let _ = std::fs::remove_file(&test_file);
+            return preferred;
+        }
+    }
+
+    info!("init_app: app_dir/data is not writable, falling back to LOCALAPPDATA");
+    let local_app_data = std::env::var("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| preferred.clone());
+    let fallback = local_app_data.join("WinServer").join("data");
+    let _ = std::fs::create_dir_all(&fallback);
+    fallback
+}
+
+/// Resolve the directory containing bundled runtime resources.
+fn resolve_runtime_dir(app_dir: &std::path::Path, resource_dir: &std::path::Path) -> PathBuf {
+    if resource_dir.join("nginx-1.26.3.zip").exists() || resource_dir.join("minio.exe").exists() {
         info!("init_app: using resource_dir for bundled runtimes: {}", resource_dir.display());
-        resource_dir
+        resource_dir.to_path_buf()
     } else if app_dir.join("runtime").join("nginx-1.26.3.zip").exists() || app_dir.join("runtime").join("minio.exe").exists() {
         let rd = app_dir.join("runtime");
         info!("init_app: using app_dir/runtime for bundled runtimes: {}", rd.display());
@@ -80,78 +160,7 @@ pub fn init_app(app_dir: PathBuf, resource_dir: PathBuf) -> App {
             dev_runtime
         } else {
             info!("init_app: no bundled runtime directory found");
-            resource_dir
-        }
-    };
-
-    auto_setup_services(&db, &runtime_manager, &runtime_dir);
-
-    let handler = Arc::new(RequestHandler::new(
-        db,
-        process_manager.clone(),
-        site_manager,
-        port_manager,
-        hosts_manager,
-        runtime_manager,
-        runtime_dir.clone(),
-    ));
-
-    App { handler, process_manager }
-}
-
-/// Auto-detect local services and install bundled runtimes for missing ones.
-fn auto_setup_services(db: &Arc<Database>, runtime_manager: &Arc<RuntimeManager>, runtime_dir: &std::path::Path) {
-    // 1. Detect local services
-    let local_services = runtime_manager.detect_local_services();
-    info!("auto_setup_services: detected {} local services", local_services.len());
-
-    // 2. Update has_local and has_bundled flags in DB
-    let software_list = match db.list_software() {
-        Ok(list) => list,
-        Err(e) => {
-            warn!("auto_setup_services: failed to list software: {}", e);
-            return;
-        }
-    };
-
-    for sw in &software_list {
-        let has_local = local_services.contains_key(&sw.service_id);
-        if has_local != sw.has_local {
-            if let Err(e) = db.update_software_has_local(&sw.id, has_local) {
-                warn!("auto_setup_services: failed to update has_local for {}: {}", sw.id, e);
-            }
-        }
-
-        let has_bundled = runtime_manager.find_bundled_file(&sw.id, runtime_dir).is_some();
-        if has_bundled != sw.has_bundled {
-            if let Err(e) = db.update_software_has_bundled(&sw.id, has_bundled) {
-                warn!("auto_setup_services: failed to update has_bundled for {}: {}", sw.id, e);
-            }
-        }
-    }
-
-    // 3. Auto-install bundled runtimes for services that have no local version and are not yet installed
-    for sw in &software_list {
-        if sw.installed {
-            continue;
-        }
-        if local_services.contains_key(&sw.service_id) {
-            info!("auto_setup_services: {} has local installation at {}, skipping bundled install", sw.id, local_services[&sw.service_id]);
-            continue;
-        }
-
-        if runtime_manager.find_bundled_file(&sw.id, runtime_dir).is_none() {
-            continue;
-        }
-
-        info!("auto_setup_services: auto-installing bundled runtime for {}", sw.id);
-        match runtime_manager.install_bundled_runtime(&sw.id, runtime_dir) {
-            Ok(manifest) => {
-                info!("auto_setup_services: successfully installed bundled {} (version={})", sw.id, manifest.version);
-            }
-            Err(e) => {
-                warn!("auto_setup_services: failed to install bundled {}: {}", sw.id, e);
-            }
+            resource_dir.to_path_buf()
         }
     }
 }

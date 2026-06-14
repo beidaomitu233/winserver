@@ -54,6 +54,55 @@ impl RequestHandler {
         }
     }
 
+    /// Run local-service detection and install missing bundled runtimes.
+    /// Offloaded to a background task at startup so the window stays responsive.
+    pub async fn run_auto_setup(&self, runtime_dir: &std::path::Path) -> anyhow::Result<()> {
+        // 1. Detect local services
+        let local_services = self.runtime_manager.detect_local_services();
+        info!("run_auto_setup: detected {} local services", local_services.len());
+
+        // 2. Update has_local and has_bundled flags in DB
+        let software_list = self.db.list_software()?;
+
+        for sw in &software_list {
+            let has_local = local_services.contains_key(&sw.service_id);
+            if has_local != sw.has_local {
+                if let Err(e) = self.db.update_software_has_local(&sw.id, has_local) {
+                    warn!("run_auto_setup: failed to update has_local for {}: {}", sw.id, e);
+                }
+            }
+
+            let has_bundled = self.runtime_manager.find_bundled_file(&sw.id, runtime_dir).is_some();
+            if has_bundled != sw.has_bundled {
+                if let Err(e) = self.db.update_software_has_bundled(&sw.id, has_bundled) {
+                    warn!("run_auto_setup: failed to update has_bundled for {}: {}", sw.id, e);
+                }
+            }
+        }
+
+        // 3. Auto-install bundled runtimes for services that have no local version and are not yet installed
+        for sw in &software_list {
+            if sw.installed {
+                continue;
+            }
+            if local_services.contains_key(&sw.service_id) {
+                info!("run_auto_setup: {} has local installation at {}, skipping bundled install", sw.id, local_services[&sw.service_id]);
+                continue;
+            }
+
+            if self.runtime_manager.find_bundled_file(&sw.id, runtime_dir).is_none() {
+                continue;
+            }
+
+            info!("run_auto_setup: auto-installing bundled runtime for {}", sw.id);
+            if let Err(e) = self.runtime_manager.install_bundled_runtime(&sw.id, runtime_dir) {
+                warn!("run_auto_setup: failed to install bundled {}: {}", sw.id, e);
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn handle(&self, request: JsonRpcRequest) -> JsonRpcResponse {
         let id = request.id.clone();
         let method = request.method.as_str();
@@ -90,6 +139,10 @@ impl RequestHandler {
             "hosts.remove" => self.handle_hosts_remove(&params).await,
             "config.get" => self.handle_config_get(&params).await,
             "config.save" => self.handle_config_save(&params).await,
+            "redis.config.get" => self.handle_redis_config_get(&params).await,
+            "redis.config.save" => self.handle_redis_config_save(&params).await,
+            "minio.config.get" => self.handle_minio_config_get(&params).await,
+            "minio.config.save" => self.handle_minio_config_save(&params).await,
             "database.create" => self.handle_database_create(&params).await,
             "database.delete" => self.handle_database_delete(&params).await,
             "database.changePassword" => self.handle_database_change_password(&params).await,
@@ -464,6 +517,69 @@ impl RequestHandler {
 
         let state = self.build_app_state().await?;
         Ok(json!({ "state": state, "message": "配置已保存" }))
+    }
+
+    // ---- Structured Redis/MinIO config (visual form mode) ----
+
+    async fn handle_redis_config_get(&self, _params: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let path = self.db.get_config_file_path("redis.conf")?
+            .ok_or_else(|| anyhow::anyhow!("Redis 配置未注册"))?;
+        let raw = std::fs::read_to_string(&path).unwrap_or_default();
+        Ok(parse_redis_conf(&raw, &path))
+    }
+
+    async fn handle_redis_config_save(&self, params: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let path = self.db.get_config_file_path("redis.conf")?
+            .ok_or_else(|| anyhow::anyhow!("Redis 配置未注册"))?;
+
+        // Backup before write
+        backup_config(&path);
+
+        let port = params["port"].as_u64().unwrap_or(6379) as u16;
+        let bind = params["bind"].as_str().unwrap_or("127.0.0.1");
+        let password = params["password"].as_str().unwrap_or("");
+        let maxmemory = params["maxmemory"].as_str().unwrap_or("256mb");
+        let policy = params["maxmemory_policy"].as_str().unwrap_or("allkeys-lru");
+        let appendonly = params["appendonly"].as_bool().unwrap_or(false);
+        let protected = params["protected_mode"].as_bool().unwrap_or(true);
+
+        let content = render_redis_conf(port, bind, password, maxmemory, policy, appendonly, protected);
+        std::fs::write(&path, &content)?;
+
+        // Persist port back to the service instance so start checks the right port.
+        let _ = self.db.update_service_port("redis", port);
+        let _ = self.db.add_log("config.save", "redis", true, "redis.conf 已通过可视化配置更新");
+
+        let state = self.build_app_state().await?;
+        Ok(json!({ "state": state, "message": "Redis 配置已保存" }))
+    }
+
+    async fn handle_minio_config_get(&self, _params: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let path = self.db.get_config_file_path("minio.env")?
+            .ok_or_else(|| anyhow::anyhow!("MinIO 配置未注册"))?;
+        let raw = std::fs::read_to_string(&path).unwrap_or_default();
+        Ok(parse_minio_env(&raw, &path))
+    }
+
+    async fn handle_minio_config_save(&self, params: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let path = self.db.get_config_file_path("minio.env")?
+            .ok_or_else(|| anyhow::anyhow!("MinIO 配置未注册"))?;
+
+        backup_config(&path);
+
+        let user = params["root_user"].as_str().unwrap_or("minioadmin");
+        let pass = params["root_password"].as_str().unwrap_or("minioadmin");
+        let api_port = params["api_port"].as_u64().unwrap_or(9000) as u16;
+        let console_port = params["console_port"].as_u64().unwrap_or(9001) as u16;
+
+        let content = render_minio_env(user, pass, api_port, console_port);
+        std::fs::write(&path, &content)?;
+
+        let _ = self.db.update_service_port("minio", api_port);
+        let _ = self.db.add_log("config.save", "minio", true, "minio.env 已通过可视化配置更新");
+
+        let state = self.build_app_state().await?;
+        Ok(json!({ "state": state, "message": "MinIO 配置已保存" }))
     }
 
     // ---- Database handlers ----
@@ -1263,6 +1379,147 @@ fn redact_secret(message: &str, secrets: &[&str]) -> String {
         }
     }
     redacted
+}
+
+/// Create a timestamped backup of a config file before overwriting it.
+fn backup_config(path: &str) {
+    if !Path::new(path).exists() {
+        return;
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    let backup_path = format!("{}.bak.{}", path, stamp);
+    if let Err(e) = std::fs::copy(path, &backup_path) {
+        warn!("Failed to create backup for {}: {}", path, e);
+    }
+}
+
+/// Parse a redis.conf into structured fields for the visual config form.
+fn parse_redis_conf(raw: &str, path: &str) -> serde_json::Value {
+    let mut port = 6379u16;
+    let mut bind = "127.0.0.1".to_string();
+    let mut password = String::new();
+    let mut maxmemory = "256mb".to_string();
+    let mut maxmemory_policy = "allkeys-lru".to_string();
+    let mut appendonly = false;
+    let mut protected_mode = true;
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let mut parts = trimmed.splitn(2, char::is_whitespace);
+        let key = parts.next().unwrap_or("");
+        let val = parts.next().unwrap_or("").trim();
+        match key {
+            "port" => port = val.parse().unwrap_or(port),
+            "bind" => bind = val.to_string(),
+            "requirepass" => password = val.to_string(),
+            "maxmemory" => maxmemory = val.to_string(),
+            "maxmemory-policy" => maxmemory_policy = val.to_string(),
+            "appendonly" => appendonly = val == "yes",
+            "protected-mode" => protected_mode = val == "yes",
+            _ => {}
+        }
+    }
+
+    json!({
+        "path": path,
+        "port": port,
+        "bind": bind,
+        "password": password,
+        "maxmemory": maxmemory,
+        "maxmemory_policy": maxmemory_policy,
+        "appendonly": appendonly,
+        "protected_mode": protected_mode,
+    })
+}
+
+/// Render structured Redis fields back to a redis.conf file body.
+fn render_redis_conf(
+    port: u16,
+    bind: &str,
+    password: &str,
+    maxmemory: &str,
+    policy: &str,
+    appendonly: bool,
+    protected: bool,
+) -> String {
+    let pass_line = if password.is_empty() {
+        "# requirepass disabled".to_string()
+    } else {
+        format!("requirepass {}", password)
+    };
+    format!(
+        r#"# Redis configuration (managed by WinServer)
+# Editable via WinServer visual config or this file directly.
+
+port {}
+bind {}
+protected-mode {}
+{}
+maxmemory {}
+maxmemory-policy {}
+appendonly {}
+save ""
+rdbchecksum no
+"#,
+        port,
+        bind,
+        if protected { "yes" } else { "no" },
+        pass_line,
+        maxmemory,
+        policy,
+        if appendonly { "yes" } else { "no" },
+    )
+}
+
+/// Parse a minio.env into structured fields for the visual config form.
+fn parse_minio_env(raw: &str, path: &str) -> serde_json::Value {
+    let mut user = "minioadmin".to_string();
+    let mut password = "minioadmin".to_string();
+    let mut api_port = 9000u16;
+    let mut console_port = 9001u16;
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((key, val)) = trimmed.split_once('=') {
+            let val = val.trim().trim_matches('"');
+            match key.trim() {
+                "MINIO_ROOT_USER" => user = val.to_string(),
+                "MINIO_ROOT_PASSWORD" => password = val.to_string(),
+                "MINIO_API_PORT" => api_port = val.parse().unwrap_or(api_port),
+                "MINIO_CONSOLE_PORT" => console_port = val.parse().unwrap_or(console_port),
+                _ => {}
+            }
+        }
+    }
+
+    json!({
+        "path": path,
+        "root_user": user,
+        "root_password": password,
+        "api_port": api_port,
+        "console_port": console_port,
+    })
+}
+
+/// Render structured MinIO fields back to a minio.env file body.
+fn render_minio_env(user: &str, password: &str, api_port: u16, console_port: u16) -> String {
+    format!(
+        r#"# MinIO configuration (managed by WinServer)
+# Editable via WinServer visual config or this file directly.
+
+MINIO_ROOT_USER={}
+MINIO_ROOT_PASSWORD={}
+MINIO_API_PORT={}
+MINIO_CONSOLE_PORT={}
+"#,
+        user, password, api_port, console_port
+    )
 }
 
 fn read_log_tail(path: &Path, search: &str, max_bytes: u64) -> anyhow::Result<Vec<String>> {
