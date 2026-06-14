@@ -360,14 +360,16 @@ onMounted(() => {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 2000;
 }
 
 .modal {
-  background: var(--bg-1);
+  background: var(--surface-solid);
+  border: 1px solid var(--line);
   border-radius: 12px;
   width: 100%;
   max-width: 400px;
@@ -379,13 +381,14 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--border-2);
+  border-bottom: 1px solid var(--line);
 }
 
 .modal-header h3 {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
+  color: var(--text);
 }
 
 .modal-body {
@@ -397,7 +400,7 @@ onMounted(() => {
   justify-content: flex-end;
   gap: 8px;
   padding: 16px 20px;
-  border-top: 1px solid var(--border-2);
+  border-top: 1px solid var(--line);
 }
 
 .form-group {
@@ -425,7 +428,7 @@ onMounted(() => {
 }
 
 .btn-icon:hover {
-  background: var(--bg-2);
-  color: var(--text-1);
+  background: var(--surface-soft);
+  color: var(--text);
 }
 </style>

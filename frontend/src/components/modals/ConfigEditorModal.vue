@@ -107,10 +107,10 @@ function handleClose() {
   font-size: 13px;
   line-height: 1.5;
   padding: 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   border-radius: 6px;
-  background: var(--bg-1);
-  color: var(--text-1);
+  background: var(--surface-soft);
+  color: var(--text);
   resize: vertical;
   tab-size: 4;
 }

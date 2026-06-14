@@ -96,7 +96,7 @@ function ownerText(value: PortCheckResult) {
   margin-top: 16px;
   padding: 12px;
   border-radius: 8px;
-  background: var(--bg-2);
+  background: var(--surface-soft);
 }
 .port-result-badge {
   display: flex;

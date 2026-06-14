@@ -2,10 +2,12 @@
 import { ref, provide, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import AppIcons from './components/AppIcons.vue'
+import InitSplash from './components/InitSplash.vue'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppTopbar from './components/layout/AppTopbar.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
 import ConfigEditorModal from './components/modals/ConfigEditorModal.vue'
+import ServiceConfigModal from './components/modals/ServiceConfigModal.vue'
 import PortCheckModal from './components/modals/PortCheckModal.vue'
 import DashboardPage from './pages/DashboardPage.vue'
 import SitesPage from './pages/SitesPage.vue'
@@ -29,6 +31,13 @@ const serviceStore = useServiceStore()
 const siteStore = useSiteStore()
 const databaseStore = useDatabaseStore()
 const settingsStore = useSettingsStore()
+
+// App initialization status — the backend runs local-service detection and
+// bundled runtime install on a background task. We show an InitSplash until it
+// reports ready, so the window stays responsive instead of freezing.
+const initPhase = ref('pending')
+const appReady = ref(false)
+let initTimer: number | null = null
 
 const systemResource = ref<SystemResource>({
   cpu_percent: 0,
@@ -64,6 +73,21 @@ function closeConfigEditor() {
 
 provide('openConfigEditor', openConfigEditor)
 
+// Global service config modal (dual-mode visual + file editor for redis/minio)
+const serviceConfigVisible = ref(false)
+const serviceConfigTarget = ref<{ id: string; name: string; config_file: string | null } | null>(null)
+
+function openServiceConfigModal(svc: { id: string; name: string; config_file: string | null }) {
+  serviceConfigTarget.value = svc
+  serviceConfigVisible.value = true
+}
+
+function closeServiceConfig() {
+  serviceConfigVisible.value = false
+}
+
+provide('openServiceConfigModal', openServiceConfigModal)
+
 // Global port check state
 const portCheckVisible = ref(false)
 
@@ -98,6 +122,25 @@ let refreshTimer: number | null = null
 let resourceTimer: number | null = null
 
 onMounted(async () => {
+  // Poll the backend init status until the background auto-setup completes.
+  initTimer = window.setInterval(async () => {
+    try {
+      const status = await invoke<{ phase: string; ready: boolean }>('app_init_status')
+      initPhase.value = status.phase || 'pending'
+      if (status.ready) {
+        appReady.value = true
+        if (initTimer) {
+          clearInterval(initTimer)
+          initTimer = null
+        }
+        await refreshAll()
+      }
+    } catch {
+      // Command may briefly fail before state is managed; retry on next tick.
+    }
+  }, 300)
+
+  // Best-effort early refresh so the UI can populate as soon as it renders.
   await refreshAll()
   refreshTimer = window.setInterval(() => {
     serviceStore.fetchState()
@@ -108,6 +151,7 @@ onMounted(async () => {
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
   if (resourceTimer) clearInterval(resourceTimer)
+  if (initTimer) clearInterval(initTimer)
 })
 
 function toastIcon(type: Toast['type']) {
@@ -119,7 +163,8 @@ function toastIcon(type: Toast['type']) {
 
 <template>
   <AppIcons />
-  <div class="app-window" id="appWindow">
+  <InitSplash v-if="!appReady" :phase="initPhase" :ready="appReady" />
+  <div class="app-window" id="appWindow" v-else>
     <AppSidebar />
     <main class="workspace">
       <AppTopbar />
@@ -159,6 +204,12 @@ function toastIcon(type: Toast['type']) {
     :label="configEditorLabel"
     :filePath="configEditorFilePath"
     @close="closeConfigEditor"
+  />
+
+  <ServiceConfigModal
+    :visible="serviceConfigVisible"
+    :service="serviceConfigTarget"
+    @close="closeServiceConfig"
   />
 
   <PortCheckModal
