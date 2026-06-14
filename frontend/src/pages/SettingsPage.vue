@@ -5,7 +5,6 @@ import { useServiceStore } from '../stores/useServiceStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useDatabaseStore } from '../stores/useDatabaseStore'
 import { useToast } from '../composables/useToast'
-import { statusText } from '../types'
 
 const icon = (name: string, cls = '') => `<svg class="icon ${cls}"><use href="#i-${name}"></use></svg>`
 
@@ -29,7 +28,6 @@ const dbBackups = ref<Array<{ name: string; path: string; size: number; modified
 
 const menuItems: Array<[string, string, string]> = [
   ['general', '通用', 'settings'],
-  ['startup', '启动与服务', 'play'],
   ['network', '网络', 'network'],
   ['security', '安全', 'shield'],
   ['backup', '备份', 'backup'],
@@ -38,7 +36,6 @@ const menuItems: Array<[string, string, string]> = [
 
 const titleMap: Record<string, string> = {
   general: '通用设置',
-  startup: '启动与服务',
   network: '端口与网络',
   security: '安全设置',
   backup: '备份策略',
@@ -61,10 +58,6 @@ async function toggleAutostart() {
 async function toggleStartSuite() {
   const next = !settingsStore.settings.start_suite_on_launch
   await settingsStore.updateSettings({ start_suite_on_launch: next })
-}
-
-async function toggleServiceAuto(serviceId: string, current: boolean) {
-  await serviceStore.toggleAuto(serviceId, !current)
 }
 
 async function saveSettings() {
@@ -255,30 +248,7 @@ onMounted(() => {
           </div>
         </template>
 
-        <!-- Startup -->
-        <template v-else-if="activeSection === 'startup'">
-          <div class="card-head">
-            <div class="card-title">{{ titleMap.startup }}</div>
-            <span class="badge primary">本机配置</span>
-          </div>
-          <div class="settings-section">
-            <div v-for="svc in serviceStore.services" :key="svc.id" class="setting-group">
-              <div class="setting-row">
-                <div>
-                  <div class="setting-name">{{ svc.name }}</div>
-                  <div class="setting-desc">
-                    端口 {{ svc.port || '—' }} · {{ statusText(svc.state) }}
-                  </div>
-                </div>
-                <div
-                  class="switch"
-                  :class="{ on: svc.auto }"
-                  @click="toggleServiceAuto(svc.id, svc.auto)"
-                />
-              </div>
-            </div>
-          </div>
-        </template>
+        <!-- Startup section removed per PRD §12 (no "启动与服务" tab) -->
 
         <!-- Appearance -->
         <template v-else-if="activeSection === 'appearance'">
@@ -478,7 +448,7 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 8px 0;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line);
 }
 .config-file-row:last-child {
   border-bottom: none;

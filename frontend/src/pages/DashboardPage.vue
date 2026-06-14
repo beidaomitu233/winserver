@@ -50,12 +50,6 @@ const totalCount = computed(() => dashboardServices.value.length)
 const siteCount = computed(() => siteStore.sites.length)
 const dbCount = computed(() => databaseStore.databases.length)
 
-function clampPercent(value: number) {
-  const n = Number(value)
-  if (!Number.isFinite(n)) return 0
-  return Math.max(0, Math.min(100, Math.round(n)))
-}
-
 function formatUptime(seconds: number) {
   const total = Math.max(0, Number(seconds || 0))
   const days = Math.floor(total / 86400)
@@ -66,19 +60,6 @@ function formatUptime(seconds: number) {
   return `${minutes}分`
 }
 
-const cpuPercent = computed(() => clampPercent(resources.value.cpu_percent))
-const memoryPercent = computed(() => clampPercent(resources.value.memory_percent))
-const diskPercent = computed(() => clampPercent(resources.value.disk?.percent ?? 0))
-const memoryDetail = computed(() => {
-  const r = resources.value
-  if (!r.total_memory_mb) return '—'
-  return `${Math.round((r.used_memory_mb || 0) / 1024 * 10) / 10} / ${Math.round(r.total_memory_mb / 1024 * 10) / 10} GB`
-})
-const diskDetail = computed(() => {
-  const d = resources.value.disk
-  if (!d) return '—'
-  return `${d.used_gb} / ${d.total_gb} GB`
-})
 const uptimeText = computed(() => formatUptime(resources.value.uptime_seconds))
 
 function toggleCollapse() {
@@ -117,12 +98,66 @@ async function restartService(id: string) {
 }
 
 function openServiceConfig(svc: { id: string; name: string; config_file: string | null }) {
+  // Redis/MinIO get a dedicated dual-mode config modal; others fall back to
+  // the generic config-file text editor.
+  const openServiceConfigModal = inject<(svc: { id: string; name: string; config_file: string | null }) => void>('openServiceConfigModal')
+  if (svc.id === 'redis' || svc.id === 'minio') {
+    openServiceConfigModal?.(svc)
+    return
+  }
   const configFile = serviceStore.configFiles.find(f => f.id === svc.id || f.id === `service:${svc.id}`)
   if (configFile) {
     openConfigEditor(configFile.id, configFile.label, configFile.path)
   } else if (svc.config_file) {
     openConfigEditor(`service:${svc.id}`, svc.name + ' 配置', svc.config_file)
   }
+}
+
+/// Status text tailored to the home card, including the "未安装" (not installed)
+/// state that the base statusText() does not cover.
+function homeStatusText(svc: { installed: boolean; state: string }): string {
+  if (!svc.installed) return '未安装'
+  return statusText(svc.state as any)
+}
+
+/// Resolve the action buttons for a service per PRD §1.1 status→button mapping.
+function serviceActionMode(svc: { installed: boolean; state: string }): {
+  primaryLabel: string
+  primaryAction: 'install' | 'toggle' | 'viewProblem' | 'none'
+  primaryDisabled: boolean
+  showRestart: boolean
+  showConfig: boolean
+  showLog: boolean
+} {
+  if (!svc.installed) {
+    return { primaryLabel: '安装/导入', primaryAction: 'install', primaryDisabled: false, showRestart: false, showConfig: false, showLog: false }
+  }
+  switch (svc.state) {
+    case 'starting':
+      return { primaryLabel: '启动中', primaryAction: 'none', primaryDisabled: true, showRestart: false, showConfig: false, showLog: true }
+    case 'stopping':
+      return { primaryLabel: '停止中', primaryAction: 'none', primaryDisabled: true, showRestart: false, showConfig: false, showLog: true }
+    case 'running':
+      return { primaryLabel: '停止', primaryAction: 'toggle', primaryDisabled: false, showRestart: true, showConfig: true, showLog: false }
+    case 'failed':
+    case 'degraded':
+      return { primaryLabel: '查看问题', primaryAction: 'viewProblem', primaryDisabled: false, showRestart: true, showConfig: false, showLog: true }
+    default: // stopped, installed, unknown
+      return { primaryLabel: '启动', primaryAction: 'toggle', primaryDisabled: false, showRestart: false, showConfig: true, showLog: false }
+  }
+}
+
+async function installBundled(serviceId: string) {
+  try {
+    await invoke('software_install_bundled', { softwareId: serviceId })
+    await serviceStore.fetchState()
+  } catch (e: any) {
+    console.error('Install bundled failed:', e)
+  }
+}
+
+function openSoftwarePage() {
+  currentPage.value = 'software'
 }
 
 async function fetchLogs() {
@@ -238,11 +273,12 @@ onMounted(async () => {
         </div>
 
         <!-- Service grid -->
-        <div class="home-service-grid" :class="{ collapsed }">
+        <div class="home-service-grid home-service-grid-scroll" :class="{ collapsed }">
           <div
             v-for="svc in dashboardServices"
             :key="svc.id"
             class="home-service-row"
+            :class="{ 'not-installed': !svc.installed }"
             :data-service="svc.id"
           >
             <div class="home-service-identity">
@@ -254,110 +290,85 @@ onMounted(async () => {
               <div class="home-service-copy">
                 <div class="home-service-name">
                   {{ svc.name }}
-                </div>
-                <div class="home-service-meta">
-                  {{ getServiceMeta(svc.id).type }} · 端口 {{ svc.port }}
+                  <span class="home-service-port">:{{ svc.port || '—' }}</span>
                 </div>
               </div>
             </div>
             <div
               class="home-service-state"
-              :class="stateToStatus(svc.state)"
+              :class="svc.installed ? stateToStatus(svc.state) : 'stopped'"
             >
-              <span class="status-dot" :class="stateToStatus(svc.state)" />
-              {{ statusText(svc.state) }}
+              <span class="status-dot" :class="svc.installed ? stateToStatus(svc.state) : 'stopped'" />
+              {{ homeStatusText(svc) }}
             </div>
             <div class="home-service-actions">
               <button
-                class="home-service-action"
-                :class="svc.state === 'running' ? 'danger' : 'primary'"
-                :disabled="serviceStore.isServiceBusy(svc.id)"
-                @click="toggleService(svc.id)"
+                v-if="serviceActionMode(svc).primaryAction === 'install'"
+                class="home-service-action primary"
+                @click="installBundled(svc.id)"
               >
-                {{ serviceStore.isServiceBusy(svc.id) ? '处理中' : (svc.state === 'running' ? '停止' : '启动') }}
+                {{ serviceActionMode(svc).primaryLabel }}
               </button>
               <button
+                v-else
+                class="home-service-action"
+                :class="svc.state === 'running' ? 'danger' : 'primary'"
+                :disabled="serviceActionMode(svc).primaryDisabled || serviceStore.isServiceBusy(svc.id)"
+                @click="serviceActionMode(svc).primaryAction === 'viewProblem' ? $emit('show-logs') : toggleService(svc.id)"
+              >
+                {{ serviceStore.isServiceBusy(svc.id) ? '处理中' : serviceActionMode(svc).primaryLabel }}
+              </button>
+              <button
+                v-if="serviceActionMode(svc).showRestart"
                 class="home-service-action"
                 :disabled="serviceStore.isServiceBusy(svc.id)"
                 @click="restartService(svc.id)"
               >
                 重启
               </button>
-              <button class="home-service-action" @click="openServiceConfig(svc)">配置</button>
+              <button
+                v-if="serviceActionMode(svc).showConfig"
+                class="home-service-action"
+                @click="openServiceConfig(svc)"
+              >
+                配置
+              </button>
+              <button
+                v-if="serviceActionMode(svc).showLog"
+                class="home-service-action"
+                @click="$emit('show-logs')"
+              >
+                日志
+              </button>
+              <button
+                v-if="!svc.installed"
+                class="home-service-action"
+                @click="openSoftwarePage"
+              >
+                软件页
+              </button>
             </div>
-          </div>
-        </div>
-
-        <!-- Logs -->
-        <div class="home-log-section">
-          <div class="home-log-head">
-            <div class="home-section-title" v-html="icon('file', 'icon-sm') + '日志'" />
-            <button class="text-link" @click="$emit('show-logs')">
-              全部 <svg class="icon icon-sm"><use href="#i-chevron-right" /></svg>
-            </button>
-          </div>
-          <div class="home-log-list">
-            <template v-if="logs.length > 0">
-              <div v-for="(log, i) in logs.slice(0, 6)" :key="i" class="home-log-row">
-                <span class="log-dot" :class="log.type" />
-                <span class="home-log-time">{{ log.time }}</span>
-                <span class="home-log-text">{{ log.text }}</span>
-              </div>
-            </template>
-            <div v-else style="color: var(--text-3)">暂无日志</div>
           </div>
         </div>
       </div>
 
-      <!-- Right: resource sidebar -->
-      <aside class="home-resource-side">
-        <div class="home-section-head resource-head">
-          <div>
-            <div class="home-section-title" v-html="icon('monitor', 'icon-sm') + '资源'" />
-          </div>
+      <!-- Right: log panel (moved from under the service list) -->
+      <aside class="home-log-side">
+        <div class="home-log-head">
+          <div class="home-section-title" v-html="icon('file', 'icon-sm') + '日志'" />
+          <button class="text-link" @click="$emit('show-logs')">
+            全部 <svg class="icon icon-sm"><use href="#i-chevron-right" /></svg>
+          </button>
         </div>
-        <div class="home-resource-summary">
-          <div class="home-resource-primary">
-            <strong>{{ cpuPercent }}%</strong>
-            <span>CPU</span>
-            <small>{{ resources.cpu_count ? `${resources.cpu_count} 核` : '刷新中' }}</small>
-          </div>
-        </div>
-        <div class="home-resource-list">
-          <div class="home-resource-row" data-resource-row="cpu">
-            <div class="resource-row-label">
-              <span>CPU</span>
-              <small>{{ resources.cpu_model || '—' }}</small>
+        <div class="home-log-list">
+          <template v-if="logs.length > 0">
+            <div v-for="(log, i) in logs" :key="i" class="home-log-row">
+              <span class="log-dot" :class="log.type" />
+              <span class="home-log-time">{{ log.time }}</span>
+              <span class="home-log-text">{{ log.text }}</span>
             </div>
-            <div class="resource-row-track">
-              <i :style="{ width: cpuPercent + '%' }" />
-            </div>
-            <strong>{{ cpuPercent }}%</strong>
-          </div>
-          <div class="home-resource-row green" data-resource-row="memory">
-            <div class="resource-row-label">
-              <span>内存</span>
-              <small>{{ memoryDetail }}</small>
-            </div>
-            <div class="resource-row-track">
-              <i :style="{ width: memoryPercent + '%' }" />
-            </div>
-            <strong>{{ memoryPercent }}%</strong>
-          </div>
-          <div class="home-resource-row purple" data-resource-row="disk">
-            <div class="resource-row-label">
-              <span>磁盘</span>
-              <small>{{ diskDetail }}</small>
-            </div>
-            <div class="resource-row-track">
-              <i :style="{ width: diskPercent + '%' }" />
-            </div>
-            <strong>{{ diskPercent }}%</strong>
-          </div>
-        </div>
-        <div class="home-resource-footer">
-          <span>运行时间</span>
-          <strong>{{ uptimeText }}</strong>
+          </template>
+          <div v-else style="color: var(--text-3)">暂无日志</div>
         </div>
       </aside>
     </section>
