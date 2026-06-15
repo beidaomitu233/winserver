@@ -36,8 +36,8 @@ async fn run_console() -> anyhow::Result<()> {
     let db = Arc::new(Database::new(&data_dir.join("winserver.db"))?);
     db.run_migrations()?;
 
-    let process_manager = Arc::new(ProcessManager::new(db.clone()));
     let port_manager = Arc::new(PortManager::new());
+    let process_manager = Arc::new(ProcessManager::new(db.clone(), port_manager.clone()));
     let hosts_manager = Arc::new(HostsManager::new());
     let site_manager = Arc::new(SiteManager::new(
         data_dir.clone(),

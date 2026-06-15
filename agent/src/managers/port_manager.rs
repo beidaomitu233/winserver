@@ -121,6 +121,25 @@ impl PortManager {
         let name = first_line.split(',').next()?;
         Some(name.trim_matches('"').to_string())
     }
+
+    /// Kill a process by PID using taskkill.
+    pub fn kill_process(&self, pid: u32) -> anyhow::Result<()> {
+        info!("Attempting to kill process PID {}", pid);
+
+        let output = std::process::Command::new("taskkill.exe")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()?;
+
+        if output.status.success() {
+            info!("Successfully killed process PID {}", pid);
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("无法终止进程 {}: {}", pid, stderr)
+        }
+    }
 }
 
 impl Default for PortManager {

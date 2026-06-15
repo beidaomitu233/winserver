@@ -386,7 +386,8 @@ impl SiteManager {
         path: &str,
         server_type: &str,
     ) -> Result<()> {
-        let site = self.db.get_site(site_id)?;        let nginx_config = self
+        let site = self.db.get_site(site_id)?;
+        let nginx_config = self
             .db
             .get_service_config("nginx")
             .context("请先导入 Nginx 运行环境")?;
@@ -403,61 +404,65 @@ impl SiteManager {
         };
 
         let doc_root_path = Path::new(&document_root);
-        if !doc_root_path.exists() || !doc_root_path.is_dir() {
-            anyhow::bail!("网站目录不存在或不是文件夹：{}", document_root);
+        if !doc_root_path.exists() {
+            anyhow::bail!("网站目录不存在：{}", document_root);
         }
 
-        // Check for domain+port conflict (excluding current site)
-        let all_sites = self.db.list_sites()?;
-        if all_sites.iter().any(|s| s.id != site_id && s.domain.eq_ignore_ascii_case(&new_domain) && s.port == port) {
-            anyhow::bail!("站点已存在：{}:{}", new_domain, port);
-        }
-
-        let _server = match server_type.to_lowercase().as_str() {
-            "nginx" => ServerType::Nginx,
-            _ => anyhow::bail!("第一阶段仅支持 Nginx 站点"),
-        };
-
-        // Resolve PHP service for the updated site
+        // Get PHP port
         let php_service_id = site.php_runtime_id.clone().unwrap_or_default();
-        let php_config = if !php_service_id.is_empty() {
-            self.db.get_service_config(&php_service_id).ok()
+        let php_cgi_port = if !php_service_id.is_empty() {
+            self.db.get_service_config(&php_service_id).map(|c| c.port).unwrap_or(9073)
         } else {
-            None
+            9073
         };
-        let php_cgi_port = php_config.map(|c| c.port).unwrap_or(9073);
 
-        // Remove old vhost configs and write new ones
-        let old_rollbacks = self.remove_vhost_configs(&nginx_config, &site)?;
-        let new_rollback = self.write_nginx_vhost(&nginx_config, &new_domain, port, &document_root, php_cgi_port)?;
+        // Remove old vhost
+        let remove_rollbacks = self.remove_vhost_configs(&nginx_config, &site)?;
+
+        // Write new vhost
+        let write_rollback = self.write_nginx_vhost(&nginx_config, &new_domain, port, &document_root, php_cgi_port)?;
         let mut hosts_synced = false;
-        let domain_changed = site.domain != new_domain;
+        let mut hosts_removed = false;
 
         let result = (|| -> Result<()> {
-            // If domain changed, update hosts
-            if domain_changed {
+            // Remove old host entry if domain changed
+            if site.domain != new_domain {
                 self.hosts_manager.remove_hosts(&site.domain)?;
-                self.hosts_manager.sync_hosts(&new_domain)?;
-                hosts_synced = true;
+                hosts_removed = true;
             }
+
+            // Sync new host entry
+            self.hosts_manager.sync_hosts(&new_domain)?;
+            hosts_synced = true;
+
+            // Validate and reload nginx
             self.validate_nginx_config(&nginx_config)?;
             self.reload_nginx(&nginx_config)?;
+
+            // Health check
             self.health_check_site(&new_domain, port)?;
 
-            // Update the database record
-            self.db.update_site(site_id, &new_domain, port, &document_root, "nginx", "running")?;
+            // Update database
+            self.db.update_site(site_id, &new_domain, port, &document_root, server_type, "running")?;
+
             Ok(())
         })();
 
         if let Err(error) = result {
-            new_rollback.restore()?;
-            for rollback in &old_rollbacks {
+            // Rollback: restore old vhost
+            write_rollback.restore()?;
+            for rollback in &remove_rollbacks {
                 let _ = rollback.restore();
             }
-            if hosts_synced {
-                let _ = self.hosts_manager.remove_hosts(&new_domain);
+
+            // Rollback hosts
+            if hosts_removed {
                 let _ = self.hosts_manager.sync_hosts(&site.domain);
             }
+            if hosts_synced && site.domain != new_domain {
+                let _ = self.hosts_manager.remove_hosts(&new_domain);
+            }
+
             let message = error.to_string();
             let _ = self.db.add_log("site.update", site_id, false, &message);
             anyhow::bail!(message);
@@ -467,10 +472,10 @@ impl SiteManager {
             "site.update",
             site_id,
             true,
-            &format!("站点已更新为 {}:{}，目录 {}", new_domain, port, document_root),
+            &format!("站点 {} 已更新：端口 {}，路径 {}", new_domain, port, document_root),
         )?;
 
-        info!("Site updated: {} (port={})", new_domain, port);
+        info!("Site updated: {} ({})", new_domain, site_id);
         Ok(())
     }
 

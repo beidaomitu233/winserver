@@ -54,16 +54,26 @@ pub struct ProcessEntry {
 pub struct ProcessManager {
     processes: Arc<Mutex<HashMap<String, ProcessEntry>>>,
     db: Arc<Database>,
+    port_manager: Arc<super::PortManager>,
     health_monitor_running: Arc<std::sync::atomic::AtomicBool>,
+    shutdown_signal: Arc<tokio::sync::Notify>,
 }
 
 impl ProcessManager {
-    pub fn new(db: Arc<Database>) -> Self {
+    pub fn new(db: Arc<Database>, port_manager: Arc<super::PortManager>) -> Self {
         Self {
             processes: Arc::new(Mutex::new(HashMap::new())),
             db,
+            port_manager,
             health_monitor_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            shutdown_signal: Arc::new(tokio::sync::Notify::new()),
         }
+    }
+
+    /// Signal the health monitor to shut down gracefully.
+    pub fn shutdown(&self) {
+        self.health_monitor_running.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.shutdown_signal.notify_one();
     }
 
     /// Start a background health monitor that checks tracked PIDs every 5 seconds.
@@ -77,40 +87,90 @@ impl ProcessManager {
         let processes = self.processes.clone();
         let db = self.db.clone();
         let running_flag = self.health_monitor_running.clone();
+        let shutdown_signal = self.shutdown_signal.clone();
 
         info!("Health monitor started");
         loop {
-            if !running_flag.load(std::sync::atomic::Ordering::SeqCst) {
-                break;
-            }
+            tokio::select! {
+                _ = shutdown_signal.notified() => {
+                    info!("Health monitor received shutdown signal");
+                    break;
+                }
+                _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                    if !running_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                        break;
+                    }
 
-            tokio::time::sleep(Duration::from_secs(5)).await;
+                    let tracked: Vec<ProcessEntry> = {
+                        let procs = processes.lock().await;
+                        procs.values().cloned().collect()
+                    };
 
-                let tracked: Vec<ProcessEntry> = {
-                    let procs = processes.lock().await;
-                    procs.values().cloned().collect()
-                };
+                    for entry in tracked {
+                        let mut sys = System::new();
+                        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+                        let is_alive = sys.process(sysinfo::Pid::from_u32(entry.pid)).is_some();
 
-                for entry in tracked {
-                    let mut sys = System::new();
-                    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-                    let is_alive = sys.process(sysinfo::Pid::from_u32(entry.pid)).is_some();
+                        if !is_alive {
+                            warn!("Health monitor: PID {} ({}) died unexpectedly", entry.pid, entry.service_id);
 
-                    if !is_alive {
-                        warn!("Health monitor: PID {} ({}) died unexpectedly", entry.pid, entry.service_id);
+                            {
+                                let mut procs = processes.lock().await;
+                                procs.remove(&entry.service_id);
+                            }
 
-                        {
-                            let mut procs = processes.lock().await;
-                            procs.remove(&entry.service_id);
+                            let error_msg = format!("进程意外退出：PID {}", entry.pid);
+                            let _ = db.update_service_failure(&entry.service_id, &error_msg);
+                            let _ = db.add_log("health.monitor", &entry.service_id, false, &error_msg);
                         }
-
-                        let error_msg = format!("进程意外退出：PID {}", entry.pid);
-                        let _ = db.update_service_failure(&entry.service_id, &error_msg);
-                        let _ = db.add_log("health.monitor", &entry.service_id, false, &error_msg);
                     }
                 }
             }
-            info!("Health monitor stopped");
+        }
+        info!("Health monitor stopped");
+    }
+
+    /// Reconcile process tracking on startup by verifying PIDs in the database
+    /// are still running. Updates stale entries to stopped state.
+    pub async fn reconcile_process_tracking(&self) -> Result<()> {
+        info!("Reconciling process tracking on startup");
+
+        let services = self.db.list_service_instances()?;
+        let mut sys = System::new();
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+        for service in services {
+            if let Some(pid) = service.pid {
+                let is_alive = sys.process(sysinfo::Pid::from_u32(pid)).is_some();
+
+                if !is_alive && service.state.is_active() {
+                    warn!("Reconcile: Service {} has stale PID {}, marking as stopped", service.id, pid);
+                    let _ = self.db.update_service_state(&service.id, ServiceState::Stopped, None);
+                    let _ = self.db.add_log(
+                        "startup.reconcile",
+                        &service.id,
+                        false,
+                        &format!("Cleared stale PID {} on startup", pid)
+                    );
+                } else if is_alive && service.state.is_active() {
+                    info!("Reconcile: Service {} with PID {} is still running", service.id, pid);
+                    // Re-track the process
+                    let exe = service.config_file.unwrap_or_default();
+                    let mut procs = self.processes.lock().await;
+                    procs.insert(
+                        service.id.clone(),
+                        ProcessEntry {
+                            pid,
+                            service_id: service.id,
+                            exe,
+                        },
+                    );
+                }
+            }
+        }
+
+        info!("Process tracking reconciliation complete");
+        Ok(())
     }
 
     /// Start a service by its ID. Reads config from the database, spawns the
@@ -167,7 +227,16 @@ impl ProcessManager {
         }
 
         if config.port > 0 && Self::is_port_listening(config.port) {
-            anyhow::bail!("端口 {} 已被占用，无法启动 {}", config.port, service_id);
+            // Check if the port is occupied and get process info
+            let port_result = self.port_manager.check_port(config.port);
+            if let (Some(pid), Some(process_name)) = (port_result.pid, port_result.process_name) {
+                anyhow::bail!(
+                    "端口 {} 已被占用（进程: {} PID: {}），无法启动 {}",
+                    config.port, process_name, pid, service_id
+                );
+            } else {
+                anyhow::bail!("端口 {} 已被占用，无法启动 {}", config.port, service_id);
+            }
         }
 
         // Auto-start PHP-CGI when Nginx or Apache starts
