@@ -85,19 +85,19 @@ test.describe('Dashboard Page', () => {
   })
 
   test('Dashboard resource monitor visible', async ({ page }) => {
-    await assertElementVisible(page, P, '.home-resource-side', 'Resource sidebar')
-    await assertElementVisible(page, P, '[data-resource-row="cpu"]', 'CPU row')
-    await assertElementVisible(page, P, '[data-resource-row="memory"]', 'Memory row')
-    await assertElementVisible(page, P, '[data-resource-row="disk"]', 'Disk row')
+    const mini = page.locator('.mini-monitor')
+    await assertElementVisible(page, P, '.mini-monitor', 'Resource monitor')
+    await recordStep(page, P, 'CPU row', (await mini.locator('.mini-row').filter({ hasText: 'CPU' }).count()) > 0, 'CPU row in mini monitor')
+    await recordStep(page, P, 'Memory row', (await mini.locator('.mini-row').filter({ hasText: '内存' }).count()) > 0, 'Memory row in mini monitor')
+    await recordStep(page, P, 'Disk row', (await mini.locator('.mini-row').filter({ hasText: '磁盘' }).count()) > 0, 'Disk row in mini monitor')
   })
 
   test('Dashboard resource values numeric', async ({ page }) => {
-    for (const res of ['cpu', 'memory', 'disk']) {
-      const row = page.locator(`[data-resource-row=""]`)
-      if (await row.isVisible().catch(() => false)) {
-        const text = await row.textContent().catch(() => '')
-        await recordStep(page, P, res + ' pct', /\d+%/.test(text || ''), text)
-      }
+    const rows = page.locator('.mini-monitor .mini-row')
+    const count = await rows.count()
+    for (let i = 0; i < count; i++) {
+      const text = await rows.nth(i).textContent().catch(() => '')
+      await recordStep(page, P, 'resource pct ' + (i + 1), /\d+%/.test(text || ''), text || '')
     }
   })
 
@@ -112,11 +112,11 @@ test.describe('Dashboard Page', () => {
   })
 
   test('Dashboard log preview section', async ({ page }) => {
-    const logSection = page.locator('.home-log-section')
+    const logSection = page.locator('.home-log-side')
     const visible = await logSection.isVisible().catch(() => false)
     await recordStep(page, P, 'Log preview', visible, visible ? 'Visible' : 'Missing')
     if (visible) {
-      const count = await page.locator('.home-log-row').count()
+      const count = await logSection.locator('.home-log-row').count()
       await recordStep(page, P, 'Log entries', true, 'Found ' + count)
     }
   })

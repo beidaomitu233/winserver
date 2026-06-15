@@ -381,22 +381,23 @@ impl Database {
         })
     }
 
-    /// Get service config (exe, args, cwd, env, process_name, pid) by service ID.
+    /// Get service config (exe, args, cwd, config_file, env, process_name, pid) by service ID.
     pub fn get_service_config(&self, service_id: &str) -> anyhow::Result<ServiceConfig> {
         self.conn(|conn| {
             let result = conn.query_row(
-                "SELECT exe, args, cwd, process_name, pid, port, installed FROM service_instances WHERE id = ?",
+                "SELECT exe, args, cwd, config_file, process_name, pid, port, installed FROM service_instances WHERE id = ?",
                 [service_id],
                 |row| {
                     Ok(ServiceConfig {
                         exe: row.get(0)?,
                         args: row.get::<_, Option<String>>(1)?,
                         cwd: row.get::<_, Option<String>>(2)?,
+                        config_file: row.get::<_, Option<String>>(3)?,
                         env: None,
-                        process_name: row.get(3)?,
-                        pid: row.get::<_, Option<i32>>(4)?.map(|p| p as u32),
-                        port: row.get::<_, i32>(5)? as u16,
-                        installed: row.get::<_, i32>(6)? != 0,
+                        process_name: row.get(4)?,
+                        pid: row.get::<_, Option<i32>>(5)?.map(|p| p as u32),
+                        port: row.get::<_, i32>(6)? as u16,
+                        installed: row.get::<_, i32>(7)? != 0,
                     })
                 },
             ).optional()?;
@@ -620,18 +621,19 @@ impl Database {
     pub fn get_service_config_by_type(&self, service_type: &str) -> anyhow::Result<ServiceConfig> {
         self.conn(|conn| {
             let result = conn.query_row(
-                "SELECT exe, args, cwd, process_name, pid, port, installed FROM service_instances WHERE service_type = ? LIMIT 1",
+                "SELECT exe, args, cwd, config_file, process_name, pid, port, installed FROM service_instances WHERE service_type = ? LIMIT 1",
                 [service_type],
                 |row| {
                     Ok(ServiceConfig {
                         exe: row.get(0)?,
                         args: row.get::<_, Option<String>>(1)?,
                         cwd: row.get::<_, Option<String>>(2)?,
+                        config_file: row.get::<_, Option<String>>(3)?,
                         env: None,
-                        process_name: row.get(3)?,
-                        pid: row.get::<_, Option<i32>>(4)?.map(|p| p as u32),
-                        port: row.get::<_, i32>(5)? as u16,
-                        installed: row.get::<_, i32>(6)? != 0,
+                        process_name: row.get(4)?,
+                        pid: row.get::<_, Option<i32>>(5)?.map(|p| p as u32),
+                        port: row.get::<_, i32>(6)? as u16,
+                        installed: row.get::<_, i32>(7)? != 0,
                     })
                 },
             ).optional()?;
@@ -1215,6 +1217,7 @@ pub struct ServiceConfig {
     pub exe: String,
     pub args: Option<String>,
     pub cwd: Option<String>,
+    pub config_file: Option<String>,
     pub env: Option<std::collections::HashMap<String, String>>,
     pub process_name: Option<String>,
     pub pid: Option<u32>,

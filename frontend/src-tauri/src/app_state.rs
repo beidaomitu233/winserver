@@ -145,17 +145,17 @@ fn resolve_data_dir(app_dir: &std::path::Path) -> PathBuf {
 
 /// Resolve the directory containing bundled runtime resources.
 fn resolve_runtime_dir(app_dir: &std::path::Path, resource_dir: &std::path::Path) -> PathBuf {
-    if resource_dir.join("nginx-1.26.3.zip").exists() || resource_dir.join("minio.exe").exists() {
+    if has_runtime_marker(resource_dir) {
         info!("init_app: using resource_dir for bundled runtimes: {}", resource_dir.display());
         resource_dir.to_path_buf()
-    } else if app_dir.join("runtime").join("nginx-1.26.3.zip").exists() || app_dir.join("runtime").join("minio.exe").exists() {
+    } else if has_runtime_marker(&app_dir.join("runtime")) {
         let rd = app_dir.join("runtime");
         info!("init_app: using app_dir/runtime for bundled runtimes: {}", rd.display());
         rd
     } else {
         // During dev mode, check the project runtime/ directory
         let dev_runtime = std::path::PathBuf::from("../../runtime");
-        if dev_runtime.join("nginx-1.26.3.zip").exists() {
+        if has_runtime_marker(&dev_runtime) {
             info!("init_app: using dev runtime directory: {}", dev_runtime.display());
             dev_runtime
         } else {
@@ -163,4 +163,11 @@ fn resolve_runtime_dir(app_dir: &std::path::Path, resource_dir: &std::path::Path
             resource_dir.to_path_buf()
         }
     }
+}
+
+fn has_runtime_marker(dir: &std::path::Path) -> bool {
+    dir.join("nginx-1.26.3.zip").exists()
+        || dir.join("minio.exe").exists()
+        || dir.join("minio").join("minio.exe").exists()
+        || dir.join("redis-7.2.4").join("redis-server.exe").exists()
 }

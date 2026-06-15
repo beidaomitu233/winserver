@@ -233,11 +233,6 @@ pub async fn db_delete_backup(state: State<'_, Arc<App>>, path: String) -> Resul
 }
 
 #[tauri::command]
-pub async fn files_list(state: State<'_, Arc<App>>, path: String) -> Result<serde_json::Value, String> {
-    call_handler(&state, "files.list", json!({ "path": path })).await
-}
-
-#[tauri::command]
 pub async fn software_install(state: State<'_, Arc<App>>, software_id: String) -> Result<serde_json::Value, String> {
     call_handler(&state, "software.install", json!({ "softwareId": software_id })).await
 }

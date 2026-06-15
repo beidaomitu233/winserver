@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, provide, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import AppIcons from './components/AppIcons.vue'
 import InitSplash from './components/InitSplash.vue'
 import AppSidebar from './components/layout/AppSidebar.vue'
-import AppTopbar from './components/layout/AppTopbar.vue'
 import AppStatusbar from './components/layout/AppStatusbar.vue'
 import ConfigEditorModal from './components/modals/ConfigEditorModal.vue'
 import ServiceConfigModal from './components/modals/ServiceConfigModal.vue'
@@ -26,6 +26,7 @@ import type { SystemResource } from './types'
 const currentPage = ref('dashboard')
 const { theme } = useTheme()
 const { toasts } = useToast()
+const tauriWindow = getCurrentWindow()
 const serviceStore = useServiceStore()
 const siteStore = useSiteStore()
 const databaseStore = useDatabaseStore()
@@ -117,6 +118,38 @@ async function refreshAll() {
 
 provide('refreshAll', refreshAll)
 
+function toggleTheme() {
+  theme.value = theme.value === 'light' ? 'dark' : 'light'
+}
+
+async function minimizeWindow() {
+  try {
+    await tauriWindow.minimize()
+  } catch {
+    // Browser preview has no Tauri window; ignore.
+  }
+}
+
+async function toggleMaximizeWindow() {
+  try {
+    if (await tauriWindow.isMaximized()) {
+      await tauriWindow.unmaximize()
+    } else {
+      await tauriWindow.maximize()
+    }
+  } catch {
+    // Browser preview has no Tauri window; ignore.
+  }
+}
+
+async function closeWindow() {
+  try {
+    await tauriWindow.close()
+  } catch {
+    // Browser preview has no Tauri window; ignore.
+  }
+}
+
 let refreshTimer: number | null = null
 let resourceTimer: number | null = null
 
@@ -166,7 +199,22 @@ function toastIcon(type: Toast['type']) {
   <div class="app-window" id="appWindow" v-else>
     <AppSidebar />
     <main class="workspace">
-      <AppTopbar />
+      <div class="window-chrome">
+        <div class="window-drag-region"></div>
+        <div class="chrome-actions">
+          <button class="icon-btn" title="刷新状态" @click="refreshAll">
+            <svg class="icon"><use href="#i-refresh"></use></svg>
+          </button>
+          <button class="icon-btn" title="切换主题" @click="toggleTheme">
+            <svg class="icon"><use :href="theme === 'dark' ? '#i-sun' : '#i-moon'"></use></svg>
+          </button>
+        </div>
+        <div class="window-controls" aria-label="窗口控制">
+          <button class="window-btn" title="最小化" @click="minimizeWindow"><span class="window-glyph minimize"></span></button>
+          <button class="window-btn" title="最大化/还原" @click="toggleMaximizeWindow"><span class="window-glyph maximize"></span></button>
+          <button class="window-btn close" title="关闭" @click="closeWindow"><span class="window-glyph close"></span></button>
+        </div>
+      </div>
       <section class="content" id="pageContent">
         <DashboardPage
           v-if="currentPage === 'dashboard'"

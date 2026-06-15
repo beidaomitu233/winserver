@@ -125,6 +125,9 @@ impl RuntimeManager {
             if already_installed {
                 info!("install_bundled_runtime: target_dir exists and software already installed, skipping (no-op)");
                 let install_path_str = target_dir.to_string_lossy().to_string();
+                if !matches!(service_id.as_str(), "nginx" | "php" | "php73") {
+                    let _ = self.register_generic_service(software_id, service_id, &install_path_str);
+                }
                 return Ok(RuntimeManifest {
                     id: software_id.to_string(),
                     runtime_type: RuntimeType::Nginx,
@@ -722,7 +725,7 @@ default-character-set=utf8
                 }
                 let exe_str = exe_path.to_string_lossy().replace('\\', "/");
                 let data_str = data_path.to_string_lossy().replace('\\', "/");
-                let args = format!("server {} --console-address :9001", data_str);
+                let args = format!("server {} --address :9000 --console-address :9001", data_str);
                 let env_str = env_path.to_string_lossy().replace('\\', "/");
                 // Register the config file so it appears in the config editor.
                 let _ = self.db.upsert_config_file("minio.env", "minio.env", &env_str);

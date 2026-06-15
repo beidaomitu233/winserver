@@ -2,7 +2,7 @@ import { ref, watchEffect } from 'vue'
 
 export function useTheme() {
   const theme = ref<'light' | 'dark'>(
-    (localStorage.getItem('ws-theme') as 'light' | 'dark') || 'light'
+    (localStorage.getItem('ws-theme') as 'light' | 'dark') || 'dark'
   )
 
   watchEffect(() => {

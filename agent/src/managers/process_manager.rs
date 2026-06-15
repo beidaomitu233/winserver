@@ -42,6 +42,74 @@ fn shell_words(s: &str) -> Vec<String> {
     words
 }
 
+fn service_config_path(config_file: &Option<String>, cwd: &str, fallback_name: &str) -> Option<PathBuf> {
+    config_file
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            let fallback = PathBuf::from(cwd).join(fallback_name);
+            if fallback.exists() {
+                Some(fallback)
+            } else {
+                None
+            }
+        })
+}
+
+fn parse_port(value: &str) -> Option<u16> {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port > 0)
+}
+
+fn parse_redis_port(path: &Path) -> Option<u16> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    raw.lines().find_map(|line| {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            return None;
+        }
+        let mut parts = line.split_whitespace();
+        let key = parts.next()?;
+        if key.eq_ignore_ascii_case("port") {
+            parts.next().and_then(parse_port)
+        } else {
+            None
+        }
+    })
+}
+
+fn parse_env_file(path: &Path) -> HashMap<String, String> {
+    let mut values = HashMap::new();
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return values;
+    };
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            continue;
+        }
+        let value = value.trim().trim_matches('"').trim_matches('\'').to_string();
+        values.insert(key.to_string(), value);
+    }
+
+    values
+}
+
 /// A tracked child process entry.
 #[derive(Debug, Clone)]
 pub struct ProcessEntry {
@@ -148,26 +216,69 @@ impl ProcessManager {
         }
 
         let exe = config.exe.clone();
-        let args: Vec<String> = config
+        let mut args: Vec<String> = config
             .args
             .as_deref()
             .map(|s| shell_words(s))
             .unwrap_or_default();
+        let mut port = config.port;
         let cwd = config.cwd.clone().unwrap_or_else(|| {
             PathBuf::from(&exe)
                 .parent()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| ".".to_string())
         });
-        let env_extra = config.env.unwrap_or_default();
+        let mut env_extra = config.env.unwrap_or_default();
 
         // Verify executable exists
         if !Path::new(&exe).exists() {
             anyhow::bail!("可执行文件不存在：{}", exe);
         }
 
-        if config.port > 0 && Self::is_port_listening(config.port) {
-            anyhow::bail!("端口 {} 已被占用，无法启动 {}", config.port, service_id);
+        if service_id == "redis" {
+            if let Some(conf_path) = service_config_path(&config.config_file, &cwd, "redis.conf") {
+                if let Some(config_port) = parse_redis_port(&conf_path) {
+                    port = config_port;
+                    let _ = self.db.update_service_port(service_id, port);
+                }
+                args = vec![conf_path.to_string_lossy().to_string()];
+            }
+        } else if service_id == "minio" {
+            let env_path = service_config_path(&config.config_file, &cwd, "minio.env");
+            let minio_env = env_path
+                .as_deref()
+                .map(parse_env_file)
+                .unwrap_or_default();
+            for (key, value) in &minio_env {
+                env_extra.insert(key.clone(), value.clone());
+            }
+            if let Some(path) = env_path {
+                env_extra.insert("MINIO_CONFIG_ENV_FILE".to_string(), path.to_string_lossy().to_string());
+            }
+            let api_port = minio_env
+                .get("MINIO_API_PORT")
+                .and_then(|value| parse_port(value))
+                .unwrap_or(port);
+            let console_port = minio_env
+                .get("MINIO_CONSOLE_PORT")
+                .and_then(|value| parse_port(value))
+                .unwrap_or(9001);
+            port = api_port;
+            let _ = self.db.update_service_port(service_id, port);
+            let data_dir = PathBuf::from(&cwd).join("data");
+            let _ = std::fs::create_dir_all(&data_dir);
+            args = vec![
+                "server".to_string(),
+                data_dir.to_string_lossy().to_string(),
+                "--address".to_string(),
+                format!(":{}", api_port),
+                "--console-address".to_string(),
+                format!(":{}", console_port),
+            ];
+        }
+
+        if port > 0 && Self::is_port_listening(port) {
+            anyhow::bail!("端口 {} 已被占用，无法启动 {}", port, service_id);
         }
 
         // Auto-start PHP-CGI when Nginx or Apache starts
@@ -217,7 +328,7 @@ impl ProcessManager {
         }
 
         let ready = self
-            .wait_for_service_ready(pid, config.port, Duration::from_secs(8))
+            .wait_for_service_ready(pid, port, Duration::from_secs(8))
             .await;
         if let Err(error) = ready {
             let _ = self.kill_process_tree(pid).await;
@@ -233,7 +344,7 @@ impl ProcessManager {
             "service.start",
             service_id,
             true,
-            &format!("服务已启动，PID {}，端口 {}", pid, config.port),
+            &format!("服务已启动，PID {}，端口 {}", pid, port),
         )?;
 
         Ok(())

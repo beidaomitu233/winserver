@@ -243,10 +243,10 @@ onMounted(() => {
 
     <Teleport to="body">
       <!-- Create Database Modal -->
-      <div v-if="showCreateModal" class="modal-overlay" @click.self="showCreateModal = false">
+      <div v-if="showCreateModal" class="overlay show" @click.self="showCreateModal = false">
         <div class="modal">
-          <div class="modal-header">
-            <h3>新建数据库</h3>
+          <div class="modal-head">
+            <div class="modal-title">新建数据库</div>
             <button class="btn-icon" @click="showCreateModal = false">
               <svg class="icon"><use href="#i-close" /></svg>
             </button>
@@ -265,7 +265,7 @@ onMounted(() => {
               <input v-model="createForm.pass" type="password" class="input" placeholder="请输入密码" />
             </div>
           </div>
-          <div class="modal-footer">
+          <div class="modal-foot">
             <button class="btn" @click="showCreateModal = false">取消</button>
             <button class="btn primary" @click="handleCreate">创建</button>
           </div>
@@ -273,10 +273,10 @@ onMounted(() => {
       </div>
 
       <!-- Change Password Modal -->
-      <div v-if="showPasswordModal" class="modal-overlay" @click.self="showPasswordModal = false">
+      <div v-if="showPasswordModal" class="overlay show" @click.self="showPasswordModal = false">
         <div class="modal">
-          <div class="modal-header">
-            <h3>修改密码 - {{ selectedDb }}</h3>
+          <div class="modal-head">
+            <div class="modal-title">修改密码 - {{ selectedDb }}</div>
             <button class="btn-icon" @click="showPasswordModal = false">
               <svg class="icon"><use href="#i-close" /></svg>
             </button>
@@ -290,7 +290,7 @@ onMounted(() => {
               <input v-model="passwordForm.pass" type="password" class="input" placeholder="请输入新密码" />
             </div>
           </div>
-          <div class="modal-footer">
+          <div class="modal-foot">
             <button class="btn" @click="showPasswordModal = false">取消</button>
             <button class="btn primary" @click="handleChangePassword">确认</button>
           </div>
@@ -298,10 +298,10 @@ onMounted(() => {
       </div>
 
       <!-- Root Password Modal -->
-      <div v-if="showRootPasswordModal" class="modal-overlay" @click.self="showRootPasswordModal = false">
+      <div v-if="showRootPasswordModal" class="overlay show" @click.self="showRootPasswordModal = false">
         <div class="modal">
-          <div class="modal-header">
-            <h3>修改 Root 密码</h3>
+          <div class="modal-head">
+            <div class="modal-title">修改 Root 密码</div>
             <button class="btn-icon" @click="showRootPasswordModal = false">
               <svg class="icon"><use href="#i-close" /></svg>
             </button>
@@ -320,7 +320,7 @@ onMounted(() => {
               <input v-model="rootPasswordForm.confirmPass" type="password" class="input" placeholder="请再次输入新密码" />
             </div>
           </div>
-          <div class="modal-footer">
+          <div class="modal-foot">
             <button class="btn" @click="showRootPasswordModal = false">取消</button>
             <button class="btn primary" @click="handleRootPassword">确认</button>
           </div>
@@ -328,10 +328,10 @@ onMounted(() => {
       </div>
 
       <!-- Import Modal -->
-      <div v-if="showImportModal" class="modal-overlay" @click.self="showImportModal = false">
+      <div v-if="showImportModal" class="overlay show" @click.self="showImportModal = false">
         <div class="modal">
-          <div class="modal-header">
-            <h3>导入 SQL - {{ importForm.dbName }}</h3>
+          <div class="modal-head">
+            <div class="modal-title">导入 SQL - {{ importForm.dbName }}</div>
             <button class="btn-icon" @click="showImportModal = false">
               <svg class="icon"><use href="#i-close" /></svg>
             </button>
@@ -345,7 +345,7 @@ onMounted(() => {
               </div>
             </div>
           </div>
-          <div class="modal-footer">
+          <div class="modal-foot">
             <button class="btn" @click="showImportModal = false">取消</button>
             <button class="btn primary" @click="handleImport">导入</button>
           </div>
@@ -356,51 +356,8 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2000;
-}
-
 .modal {
-  background: var(--surface-solid);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  width: 100%;
-  max-width: 400px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--line);
-}
-
-.modal-header h3 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.modal-body {
-  padding: 20px;
-}
-
-.modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 16px 20px;
-  border-top: 1px solid var(--line);
+  max-width: 430px;
 }
 
 .form-group {

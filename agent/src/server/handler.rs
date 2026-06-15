@@ -85,6 +85,13 @@ impl RequestHandler {
         //    show as installed (instead of leaving installed=0 forever).
         for sw in &software_list {
             if sw.installed {
+                if matches!(sw.service_id.as_str(), "redis" | "minio") {
+                    if let Some(install_path) = sw.install_path.as_deref().filter(|path| !path.trim().is_empty()) {
+                        if let Err(e) = self.runtime_manager.register_detected_service(&sw.id, &sw.service_id, install_path) {
+                            warn!("run_auto_setup: failed to repair registered {}: {}", sw.id, e);
+                        }
+                    }
+                }
                 continue;
             }
             if let Some(install_path) = local_services.get(&sw.service_id) {
@@ -166,7 +173,6 @@ impl RequestHandler {
             "software.installBundled" => self.handle_software_install_bundled(&params).await,
             "software.detectLocal" => self.handle_software_detect_local().await,
             "service.toggleAuto" => self.handle_service_toggle_auto(&params).await,
-            "files.list" => self.handle_files_list(&params).await,
             _ => {
                 warn!("Unknown method: {}", method);
                 return JsonRpcResponse::error_with_data(
@@ -519,6 +525,20 @@ impl RequestHandler {
         }
 
         std::fs::write(&path, content)?;
+
+        if file_id == "redis.conf" {
+            let parsed = parse_redis_conf(content, &path);
+            if let Some(port) = parsed.get("port").and_then(|value| value.as_u64()) {
+                let _ = self.db.update_service_port("redis", port as u16);
+            }
+            let _ = self.db.add_log("config.save", "redis", true, "redis.conf 已通过文件编辑更新");
+        } else if file_id == "minio.env" {
+            let parsed = parse_minio_env(content, &path);
+            if let Some(port) = parsed.get("api_port").and_then(|value| value.as_u64()) {
+                let _ = self.db.update_service_port("minio", port as u16);
+            }
+            let _ = self.db.add_log("config.save", "minio", true, "minio.env 已通过文件编辑更新");
+        }
 
         let state = self.build_app_state().await?;
         Ok(json!({ "state": state, "message": "配置已保存" }))
@@ -1003,11 +1023,20 @@ impl RequestHandler {
             runtime_manager.detect_local_services()
         }).await?;
 
+        for sw in self.db.list_software()? {
+            if let Some(path) = found.get(&sw.service_id) {
+                if let Err(e) = self.runtime_manager.register_detected_service(&sw.id, &sw.service_id, path) {
+                    warn!("software.detectLocal: failed to register {} from {}: {}", sw.id, path, e);
+                }
+            }
+        }
+
         let local_map: serde_json::Value = found.into_iter()
             .map(|(k, v)| (k, json!(v)))
             .collect();
+        let state = self.build_app_state().await?;
 
-        Ok(json!({ "localServices": local_map }))
+        Ok(json!({ "localServices": local_map, "state": state }))
     }
 
     async fn handle_software_uninstall(&self, params: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
@@ -1290,26 +1319,6 @@ impl RequestHandler {
         Ok(json!({ "ok": true, "db": db_name }))
     }
 
-    async fn handle_files_list(&self, params: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
-        let dir_path = params["path"].as_str().ok_or_else(|| anyhow::anyhow!("缺少 path"))?;
-        let dir = std::path::Path::new(dir_path);
-        if !dir.exists() || !dir.is_dir() {
-            anyhow::bail!("目录不存在：{}", dir_path);
-        }
-        let mut entries = Vec::new();
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let metadata = entry.metadata()?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            entries.push(json!({
-                "name": name,
-                "isDir": metadata.is_dir(),
-                "size": metadata.len(),
-                "modifiedAt": metadata.modified().ok().map(|t| format!("{:?}", t)).unwrap_or_default()
-            }));
-        }
-        Ok(json!({ "entries": entries }))
-    }
 }
 
 fn classify_error(message: &str) -> (i32, &'static str) {

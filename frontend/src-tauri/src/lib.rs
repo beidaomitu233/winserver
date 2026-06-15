@@ -73,7 +73,6 @@ pub fn run() {
             commands::db_sync,
             commands::db_backups,
             commands::db_delete_backup,
-            commands::files_list,
             commands::software_install,
             commands::software_uninstall,
             commands::software_download_install,
