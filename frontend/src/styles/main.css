@@ -55,7 +55,7 @@
     body {
       margin: 0;
       overflow: hidden;
-      background: #161616;
+      background: var(--bg);
       color: var(--text);
       font-family: Inter, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
       font-size: 14px;
@@ -88,8 +88,8 @@
       display: grid;
       grid-template-columns: var(--sidebar) 1fr;
       grid-template-rows: 1fr;
-      background: #161616;
-      border: 1px solid rgba(199, 209, 222, 0.75);
+      background: var(--bg);
+      border: 1px solid var(--line);
       overflow: hidden;
       transition: .24s ease;
     }
@@ -117,12 +117,11 @@
       display: flex;
       flex-direction: column;
       padding: 22px 14px 14px;
-      background: #161616;
+      background: var(--surface-soft);
       border-right: 1px solid var(--line);
       backdrop-filter: blur(18px);
       z-index: 10;
     }
-    [data-theme="dark"] .sidebar { background: #161616; }
 
     .brand {
       display: flex;
@@ -236,7 +235,7 @@
       display: grid;
       position: relative;
       grid-template-rows: 1fr 48px;
-      background: #161616;
+      background: var(--bg);
     }
 
     .window-chrome {
@@ -250,7 +249,7 @@
       align-items: center;
       gap: 8px;
       padding: 6px 10px 6px 18px;
-      background: linear-gradient(180deg, rgba(22,22,22,.96), rgba(22,22,22,.70));
+      background: var(--bg);
       z-index: 40;
       pointer-events: none;
     }
@@ -324,7 +323,7 @@
       min-height: 0;
       overflow: auto;
       padding: calc(var(--chrome-height) + 10px) 20px 26px;
-      background: #161616;
+      background: var(--bg);
     }
 
     .statusbar {

@@ -236,6 +236,21 @@ impl ProcessManager {
         }
 
         if service_id == "redis" {
+            // Ensure a default redis.conf exists in the cwd
+            let default_conf = PathBuf::from(&cwd).join("redis.conf");
+            if !default_conf.exists() {
+                let default_config = r#"# Redis configuration (managed by WinServer)
+port 6379
+bind 127.0.0.1
+protected-mode yes
+maxmemory 256mb
+maxmemory-policy allkeys-lru
+appendonly no
+save ""
+"#;
+                let _ = std::fs::write(&default_conf, default_config);
+                info!("Created default redis.conf at {}", default_conf.display());
+            }
             if let Some(conf_path) = service_config_path(&config.config_file, &cwd, "redis.conf") {
                 if let Some(config_port) = parse_redis_port(&conf_path) {
                     port = config_port;
@@ -289,12 +304,24 @@ impl ProcessManager {
         // Spawn the process
         info!("Starting service {}: {} {:?}", service_id, exe, args);
 
+        // For Redis, capture stderr to a log file for diagnostics
+        let stderr_target = if service_id == "redis" {
+            let log_dir = PathBuf::from(&cwd).join("logs");
+            let _ = std::fs::create_dir_all(&log_dir);
+            let log_file = log_dir.join("redis-stderr.log");
+            std::fs::File::create(&log_file)
+                .map(std::process::Stdio::from)
+                .unwrap_or(std::process::Stdio::null())
+        } else {
+            std::process::Stdio::null()
+        };
+
         let mut cmd = std::process::Command::new(&exe);
         cmd.args(&args)
             .current_dir(&cwd)
             .envs(&env_extra)
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stderr(stderr_target);
 
         // On Windows, use CREATE_NO_WINDOW + DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP
         // to prevent console windows from appearing on screen.
@@ -332,8 +359,70 @@ impl ProcessManager {
             .await;
         if let Err(error) = ready {
             let _ = self.kill_process_tree(pid).await;
-            let mut processes = self.processes.lock().await;
-            processes.remove(service_id);
+            {
+                let mut processes = self.processes.lock().await;
+                processes.remove(service_id);
+            }
+            // For Redis, retry once without a config file
+            if service_id == "redis" && !args.is_empty() {
+                let stderr_content = std::fs::read_to_string(
+                    PathBuf::from(&cwd).join("logs").join("redis-stderr.log")
+                ).unwrap_or_default();
+                warn!("Redis first attempt failed (PID {}): {}. Stderr: {}", pid, error, stderr_content);
+                info!("Redis retrying without config file...");
+                let mut retry_cmd = std::process::Command::new(&exe);
+                retry_cmd.args(Vec::<String>::new())
+                    .current_dir(&cwd)
+                    .envs(&env_extra)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x08000000;
+                    const DETACHED_PROCESS: u32 = 0x00000008;
+                    const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+                    retry_cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+                }
+                match retry_cmd.spawn() {
+                    Ok(retry_child) => {
+                        let retry_pid = retry_child.id();
+                        info!("Redis retry started with PID {}", retry_pid);
+                        {
+                            let mut processes = self.processes.lock().await;
+                            processes.insert(
+                                service_id.to_string(),
+                                ProcessEntry {
+                                    pid: retry_pid,
+                                    service_id: service_id.to_string(),
+                                    exe: exe.clone(),
+                                },
+                            );
+                        }
+                        let retry_ready = self
+                            .wait_for_service_ready(retry_pid, port, Duration::from_secs(8))
+                            .await;
+                        if let Err(retry_error) = retry_ready {
+                            let _ = self.kill_process_tree(retry_pid).await;
+                            let mut processes = self.processes.lock().await;
+                            processes.remove(service_id);
+                            anyhow::bail!("Redis 启动失败（首次尝试+无配置重试均未成功）: {}", retry_error);
+                        }
+                        self.db
+                            .update_service_state(service_id, ServiceState::Running, Some(retry_pid))?;
+                        self.db.add_log(
+                            "service.start",
+                            service_id,
+                            true,
+                            &format!("服务已启动（无配置模式），PID {}，端口 {}", retry_pid, port),
+                        )?;
+                        return Ok(());
+                    }
+                    Err(spawn_err) => {
+                        anyhow::bail!("Redis 启动失败（无法重试）: {}", spawn_err);
+                    }
+                }
+            }
             anyhow::bail!("{}", error);
         }
 

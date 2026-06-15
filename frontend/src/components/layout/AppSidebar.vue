@@ -38,7 +38,6 @@ const diskPercent = computed(() => Math.max(0, Math.min(100, Math.round(systemRe
       </button>
     </nav>
 
-    <div class="sidebar-spacer"></div>
     <nav class="nav-list">
       <button class="nav-item" data-action="open-terminal">
         <svg class="icon"><use href="#i-terminal"></use></svg><span>终端</span>

@@ -1242,7 +1242,6 @@ maxmemory 256mb
 maxmemory-policy allkeys-lru
 appendonly no
 save ""
-rdbchecksum no
 "#
     .to_string()
 }

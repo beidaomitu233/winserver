@@ -228,7 +228,7 @@ function toastIcon(type: Toast['type']) {
         <LogsPage v-else-if="currentPage === 'logs'" />
         <SettingsPage v-else-if="currentPage === 'settings'" />
       </section>
-      <AppStatusbar />
+      <AppStatusbar v-if="currentPage !== 'dashboard'" />
     </main>
   </div>
 

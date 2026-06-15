@@ -153,15 +153,34 @@ fn resolve_runtime_dir(app_dir: &std::path::Path, resource_dir: &std::path::Path
         info!("init_app: using app_dir/runtime for bundled runtimes: {}", rd.display());
         rd
     } else {
-        // During dev mode, check the project runtime/ directory
-        let dev_runtime = std::path::PathBuf::from("../../runtime");
-        if has_runtime_marker(&dev_runtime) {
-            info!("init_app: using dev runtime directory: {}", dev_runtime.display());
-            dev_runtime
-        } else {
-            info!("init_app: no bundled runtime directory found");
-            resource_dir.to_path_buf()
+        // Try several dev-mode fallbacks relative to the binary
+        let candidates = [
+            std::path::PathBuf::from("../../runtime"),           // from target/debug/
+            std::path::PathBuf::from("../../../runtime"),        // from target/debug/ (deeper)
+            std::path::PathBuf::from("runtime"),                  // from project root
+        ];
+        for candidate in &candidates {
+            if has_runtime_marker(candidate) {
+                info!("init_app: using dev runtime directory: {}", candidate.display());
+                return candidate.clone();
+            }
         }
+        // Try the parent chain: walk up looking for a runtime/ directory
+        let mut current = app_dir.to_path_buf();
+        for _ in 0..6 {
+            let candidate = current.join("runtime");
+            if has_runtime_marker(&candidate) {
+                info!("init_app: found runtime directory by walking up: {}", candidate.display());
+                return candidate;
+            }
+            if let Some(parent) = current.parent() {
+                current = parent.to_path_buf();
+            } else {
+                break;
+            }
+        }
+        info!("init_app: no bundled runtime directory found, falling back to resource_dir");
+        resource_dir.to_path_buf()
     }
 }
 
