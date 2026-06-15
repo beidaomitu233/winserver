@@ -69,6 +69,12 @@ const state: AppState = {
   system_settings: settings,
 }
 
+const configText: Record<string, string> = {
+  'redis.conf': '# Redis configuration\nport 6379\nbind 127.0.0.1\nprotected-mode yes\nmaxmemory 256mb\n',
+  'minio.env': 'MINIO_ROOT_USER=minioadmin\nMINIO_ROOT_PASSWORD=minioadmin\nMINIO_API_PORT=9000\nMINIO_CONSOLE_PORT=9001\n',
+  nginx: 'events {}\nhttp { include vhosts/*.conf; }\n',
+}
+
 function service(
   id: string,
   name: string,
@@ -251,8 +257,42 @@ export function setupTauriDevMock() {
       const port = Number(payload.port || 0)
       return { port, is_open: false, available: true, pid: null, process_name: null, owner_type: null, owner_id: null }
     }
-    if (cmd === 'read_config_file') return { content: '# mock config\nport 6379\n', exists: true }
-    if (cmd === 'save_config_file' || cmd === 'redis_config_save' || cmd === 'minio_config_save') return { state: cloneState() }
+    if (cmd === 'redis_config_get') {
+      return {
+        path: 'D:\\WinServer\\runtime\\redis-7.2.4\\redis.conf',
+        port: 6379,
+        bind: '127.0.0.1',
+        password: '',
+        maxmemory: '256mb',
+        maxmemory_policy: 'allkeys-lru',
+        appendonly: false,
+        protected_mode: true,
+      }
+    }
+    if (cmd === 'minio_config_get') {
+      return {
+        path: 'D:\\WinServer\\runtime\\minio\\minio.env',
+        root_user: 'minioadmin',
+        root_password: 'minioadmin',
+        api_port: 9000,
+        console_port: 9001,
+      }
+    }
+    if (cmd === 'get_config_file') {
+      const fileId = String(payload.fileId || '')
+      const file = state.config_files.find(item => item.id === fileId)
+      return {
+        content: configText[fileId] || '# mock config\n',
+        path: file?.path || '',
+        exists: true,
+      }
+    }
+    if (cmd === 'save_config_file') {
+      const fileId = String(payload.fileId || '')
+      configText[fileId] = String(payload.content || '')
+      return { state: cloneState() }
+    }
+    if (cmd === 'redis_config_save' || cmd === 'minio_config_save') return { state: cloneState() }
     if (cmd === 'open_url' || cmd === 'open_file' || cmd === 'open_folder') return { ok: true }
     if (cmd.startsWith('db_')) return { state: cloneState() }
     return null

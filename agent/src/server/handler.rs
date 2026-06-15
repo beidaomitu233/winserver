@@ -1571,8 +1571,9 @@ fn read_log_tail(path: &Path, search: &str, max_bytes: u64) -> anyhow::Result<Ve
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_error, ensure_child_file, quote_mysql_ident, quote_mysql_string, read_log_tail,
-        redact_secret, validate_mysql_identifier,
+        classify_error, ensure_child_file, parse_minio_env, parse_redis_conf, quote_mysql_ident,
+        quote_mysql_string, read_log_tail, redact_secret, render_minio_env, render_redis_conf,
+        validate_mysql_identifier,
     };
     use std::fs;
     use uuid::Uuid;
@@ -1624,5 +1625,39 @@ mod tests {
 
         assert!(ensure_child_file(&backups, &inside, "备份文件").is_ok());
         assert!(ensure_child_file(&backups, &outside, "备份文件").is_err());
+    }
+
+    #[test]
+    fn redis_visual_config_parse_and_render_roundtrip() {
+        let raw = "port 6380\nbind 127.0.0.1\nrequirepass secret\nappendonly yes\nprotected-mode no\nmaxmemory 512mb\nmaxmemory-policy noeviction\n";
+        let parsed = parse_redis_conf(raw, "redis.conf");
+
+        assert_eq!(parsed["port"], 6380);
+        assert_eq!(parsed["password"], "secret");
+        assert_eq!(parsed["appendonly"], true);
+        assert_eq!(parsed["protected_mode"], false);
+
+        let rendered = render_redis_conf(6381, "0.0.0.0", "", "256mb", "allkeys-lru", false, true);
+        assert!(rendered.contains("port 6381"));
+        assert!(rendered.contains("bind 0.0.0.0"));
+        assert!(rendered.contains("# requirepass disabled"));
+        assert!(rendered.contains("protected-mode yes"));
+    }
+
+    #[test]
+    fn minio_visual_config_parse_and_render_roundtrip() {
+        let raw = "MINIO_ROOT_USER=\"root\"\nMINIO_ROOT_PASSWORD=\"pass\"\nMINIO_API_PORT=9010\nMINIO_CONSOLE_PORT=9011\n";
+        let parsed = parse_minio_env(raw, "minio.env");
+
+        assert_eq!(parsed["root_user"], "root");
+        assert_eq!(parsed["root_password"], "pass");
+        assert_eq!(parsed["api_port"], 9010);
+        assert_eq!(parsed["console_port"], 9011);
+
+        let rendered = render_minio_env("admin", "secret", 9000, 9001);
+        assert!(rendered.contains("MINIO_ROOT_USER=admin"));
+        assert!(rendered.contains("MINIO_ROOT_PASSWORD=secret"));
+        assert!(rendered.contains("MINIO_API_PORT=9000"));
+        assert!(rendered.contains("MINIO_CONSOLE_PORT=9001"));
     }
 }

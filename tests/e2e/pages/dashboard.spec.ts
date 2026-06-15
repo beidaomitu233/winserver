@@ -6,7 +6,7 @@ import { test, expect, type Page } from '@playwright/test'
 import {
   recordStep, navigateToPage, waitForAppReady,
   assertElementExists, assertElementVisible, assertTextContent,
-  clickAndRecord, checkForToast, ensureDirs,
+  clickAndRecord, checkForToast, closeModal, ensureDirs, waitForModal,
 } from '../helpers'
 
 const P = 'Dashboard'
@@ -70,6 +70,47 @@ test.describe('Dashboard Page', () => {
       const hasActions = await svc.locator('.home-service-action').count()
       await recordStep(page, P, 'Service ' + name, true, 'actions=' + hasActions)
     }
+  })
+
+  test('Dashboard one-click start updates service state', async ({ page }) => {
+    await page.locator('button:has-text("一键启动")').first().click()
+    await page.waitForTimeout(600)
+    const pillText = await page.locator('.home-state-pill').textContent().catch(() => '')
+    const updated = /5\s*项服务在线/.test(pillText || '')
+    await recordStep(page, P, 'One-click start state', updated, pillText || '')
+    expect(updated).toBeTruthy()
+  })
+
+  test('Dashboard Redis config supports visual and file modes', async ({ page }) => {
+    await page.locator('[data-service="redis"] .home-service-action').filter({ hasText: '配置' }).first().click()
+    const modal = await waitForModal(page)
+    const visible = await modal.isVisible().catch(() => false)
+    await recordStep(page, P, 'Redis config modal', visible, visible ? 'Opened' : 'Missing')
+    expect(visible).toBeTruthy()
+
+    await assertElementVisible(page, P, '.service-config-modal input[type="number"]', 'Redis visual port')
+    await page.locator('.service-config-modal .config-tab').filter({ hasText: '直接编辑文件' }).click()
+    const textarea = page.locator('.service-config-modal textarea').first()
+    const hasFileEditor = await textarea.isVisible().catch(() => false)
+    const content = hasFileEditor ? await textarea.inputValue().catch(() => '') : ''
+    await recordStep(page, P, 'Redis direct file editor', hasFileEditor && content.includes('port 6379'), content.slice(0, 80))
+    expect(hasFileEditor).toBeTruthy()
+    expect(content).toContain('port 6379')
+    await closeModal(page)
+  })
+
+  test('Dashboard port quick action checks availability', async ({ page }) => {
+    await page.locator('.home-quick').filter({ hasText: '端口' }).click()
+    const modal = await waitForModal(page)
+    await assertElementVisible(page, P, '.modal:visible input[type="number"]', 'Port input')
+    await page.locator('.modal:visible input[type="number"]').fill('18080')
+    await page.locator('.modal:visible button:has-text("检测")').click()
+    await page.waitForTimeout(300)
+    const result = await page.locator('.port-result').textContent().catch(() => '')
+    const ok = /18080/.test(result || '') && /可用/.test(result || '')
+    await recordStep(page, P, 'Port quick action result', ok, result || '')
+    expect(ok).toBeTruthy()
+    await closeModal(page)
   })
 
   test('Dashboard collapse/expand services', async ({ page }) => {

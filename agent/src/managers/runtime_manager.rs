@@ -1472,4 +1472,62 @@ mod tests {
 
         assert!(error.to_string().contains("php-cgi.exe"));
     }
+
+    #[test]
+    fn register_generic_redis_creates_editable_config_and_service_row() {
+        let db = make_db();
+        let data_dir = make_data_dir();
+        let root = data_dir.join("redis-7.2.4");
+        fs::create_dir_all(&root).expect("create redis dir");
+        fs::write(root.join("redis-server.exe"), "").expect("write redis exe");
+
+        let manager = RuntimeManager::new(data_dir, db.clone());
+        manager
+            .register_generic_service("redis", "redis", &root.to_string_lossy())
+            .expect("register redis");
+
+        let conf = root.join("redis.conf");
+        assert!(conf.exists(), "redis.conf should be created when missing");
+        let service = db.get_service_config("redis").expect("redis service config");
+        assert!(service.installed);
+        assert_eq!(service.args.as_deref(), Some("redis.conf"));
+        let conf_str = conf.to_string_lossy().replace('\\', "/");
+        assert_eq!(service.config_file.as_deref(), Some(conf_str.as_str()));
+        assert!(db
+            .list_config_files()
+            .expect("config files")
+            .iter()
+            .any(|file| file.id == "redis.conf" && file.exists));
+    }
+
+    #[test]
+    fn register_generic_minio_creates_env_and_full_start_args() {
+        let db = make_db();
+        let data_dir = make_data_dir();
+        let root = data_dir.join("minio");
+        fs::create_dir_all(&root).expect("create minio dir");
+        fs::write(root.join("minio.exe"), "").expect("write minio exe");
+
+        let manager = RuntimeManager::new(data_dir, db.clone());
+        manager
+            .register_generic_service("minio", "minio", &root.to_string_lossy())
+            .expect("register minio");
+
+        let env = root.join("minio.env");
+        assert!(env.exists(), "minio.env should be created when missing");
+        let service = db.get_service_config("minio").expect("minio service config");
+        assert!(service.installed);
+        let args = service.args.unwrap_or_default();
+        let data_arg = root.join("data").to_string_lossy().replace('\\', "/");
+        assert!(args.contains(&format!("server {}", data_arg)));
+        assert!(args.contains("--address :9000"));
+        assert!(args.contains("--console-address :9001"));
+        let env_str = env.to_string_lossy().replace('\\', "/");
+        assert_eq!(service.config_file.as_deref(), Some(env_str.as_str()));
+        assert!(db
+            .list_config_files()
+            .expect("config files")
+            .iter()
+            .any(|file| file.id == "minio.env" && file.exists));
+    }
 }

@@ -797,6 +797,55 @@ mod tests {
             .expect("test service")
     }
 
+    #[test]
+    fn parse_redis_port_uses_uncommented_port() {
+        let dir = std::env::temp_dir().join(format!("winserver-redis-conf-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create redis conf dir");
+        let conf = dir.join("redis.conf");
+        fs::write(
+            &conf,
+            "# port 6379\n\nbind 127.0.0.1\nport 6388\nprotected-mode yes\n",
+        )
+        .expect("write redis conf");
+
+        assert_eq!(parse_redis_port(&conf), Some(6388));
+    }
+
+    #[test]
+    fn parse_env_file_strips_quotes_and_ignores_comments() {
+        let dir = std::env::temp_dir().join(format!("winserver-minio-env-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create minio env dir");
+        let env = dir.join("minio.env");
+        fs::write(
+            &env,
+            "# comment\nMINIO_ROOT_USER=\"admin\"\nMINIO_ROOT_PASSWORD='secret'\nMINIO_API_PORT=9010\n",
+        )
+        .expect("write minio env");
+
+        let parsed = parse_env_file(&env);
+        assert_eq!(parsed.get("MINIO_ROOT_USER").map(String::as_str), Some("admin"));
+        assert_eq!(parsed.get("MINIO_ROOT_PASSWORD").map(String::as_str), Some("secret"));
+        assert_eq!(parsed.get("MINIO_API_PORT").map(String::as_str), Some("9010"));
+    }
+
+    #[test]
+    fn service_config_path_prefers_db_path_then_existing_fallback() {
+        let dir = std::env::temp_dir().join(format!("winserver-config-path-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create service dir");
+        let fallback = dir.join("redis.conf");
+        fs::write(&fallback, "port 6379\n").expect("write fallback");
+        let explicit = dir.join("custom.conf");
+
+        assert_eq!(
+            service_config_path(&Some(explicit.to_string_lossy().to_string()), &dir.to_string_lossy(), "redis.conf"),
+            Some(explicit)
+        );
+        assert_eq!(
+            service_config_path(&None, &dir.to_string_lossy(), "redis.conf"),
+            Some(fallback)
+        );
+    }
+
     #[tokio::test]
     async fn start_and_stop_service_verifies_pid_and_port() {
         let Some(node) = node_exe() else {

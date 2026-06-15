@@ -35,6 +35,7 @@ const settingsStore = useSettingsStore()
 const currentPage = inject<Ref<string>>('currentPage')!
 const resources = inject<Ref<SystemResource>>('systemResource')!
 const openConfigEditor = inject<(fileId: string, label: string, filePath: string) => void>('openConfigEditor')!
+const openServiceConfigModal = inject<(svc: { id: string; name: string; config_file: string | null }) => void>('openServiceConfigModal')!
 
 const collapsed = ref(localStorage.getItem('ws-svc-collapsed') === '1')
 const logs = ref<Array<{ time: string; type: string; text: string }>>([])
@@ -100,7 +101,6 @@ async function restartService(id: string) {
 function openServiceConfig(svc: { id: string; name: string; config_file: string | null }) {
   // Redis/MinIO get a dedicated dual-mode config modal; others fall back to
   // the generic config-file text editor.
-  const openServiceConfigModal = inject<(svc: { id: string; name: string; config_file: string | null }) => void>('openServiceConfigModal')
   if (svc.id === 'redis' || svc.id === 'minio') {
     openServiceConfigModal?.(svc)
     return
