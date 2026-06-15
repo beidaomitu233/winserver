@@ -40,7 +40,7 @@ const collapsed = ref(localStorage.getItem('ws-svc-collapsed') === '1')
 const logs = ref<Array<{ time: string; type: string; text: string }>>([])
 
 const dashboardServices = computed(() => {
-  const primaryTypes = new Set(['nginx', 'php', 'mysql', 'mysql57', 'mysql80', 'redis'])
+  const primaryTypes = new Set(['nginx', 'apache', 'php', 'php73', 'mysql57', 'mysql80', 'redis', 'pgsql', 'minio'])
   return serviceStore.services.filter(service =>
     primaryTypes.has(service.id) || primaryTypes.has(service.service_type)
   )
@@ -238,9 +238,6 @@ onMounted(async () => {
         </button>
         <button class="home-quick" @click="currentPage = 'software'">
           <svg class="icon icon-sm"><use href="#i-grid" /></svg>环境
-        </button>
-        <button class="home-quick" @click="currentPage = 'files'">
-          <svg class="icon icon-sm"><use href="#i-folder" /></svg>文件
         </button>
         <button class="home-quick" @click="$emit('show-ports')">
           <svg class="icon icon-sm"><use href="#i-network" /></svg>端口

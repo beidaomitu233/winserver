@@ -33,9 +33,6 @@ const diskPercent = computed(() => Math.max(0, Math.min(100, Math.round(systemRe
       <button class="nav-item" :class="{ active: currentPage === 'software' }" @click="currentPage = 'software'">
         <svg class="icon"><use href="#i-grid"></use></svg><span>软件</span>
       </button>
-      <button class="nav-item" :class="{ active: currentPage === 'files' }" @click="currentPage = 'files'">
-        <svg class="icon"><use href="#i-folder"></use></svg><span>文件</span>
-      </button>
       <button class="nav-item" :class="{ active: currentPage === 'logs' }" @click="currentPage = 'logs'">
         <svg class="icon"><use href="#i-file"></use></svg><span>日志</span>
       </button>

@@ -374,21 +374,40 @@ default-character-set=utf8
 
     /// Detect local services already installed on this machine.
     /// Returns a map of service_id -> install_path for found services.
+    ///
+    /// Detection order (first match wins):
+    ///   1. The app's own managed dir `data_dir/server/{service_id}` — where
+    ///      bundled/runtime installs land. This lets services survive a DB reset
+    ///      or a fresh launch against an existing data directory.
+    ///   2. Well-known system install paths.
+    ///   3. System PATH via `where <marker>` (minio included).
     pub fn detect_local_services(&self) -> std::collections::HashMap<String, String> {
         let mut found = std::collections::HashMap::new();
 
-        // Check common directories and PATH for each service
+        // (service_id, well-known system dirs, marker file relative to the dir)
         let checks: &[(&str, &[&str], &str)] = &[
             ("nginx", &["C:/nginx", "D:/nginx", "C:/Program Files/nginx"], "nginx.exe"),
             ("mysql80", &["C:/Program Files/MySQL/MySQL Server 8.0", "D:/MySQL8", "D:/mysql80"], "bin/mysqld.exe"),
             ("mysql57", &["C:/Program Files/MySQL/MySQL Server 5.7", "D:/MySQL5", "D:/mysql57"], "bin/mysqld.exe"),
             ("redis", &["C:/Redis", "D:/Redis", "C:/Program Files/Redis"], "redis-server.exe"),
-            ("minio", &[], "minio.exe"),
+            ("minio", &["C:/minio", "D:/minio", "C:/Program Files/minio"], "minio.exe"),
+            ("pgsql", &["C:/Program Files/PostgreSQL", "D:/PostgreSQL", "D:/pgsql"], "bin/pg_ctl.exe"),
+            ("apache", &["C:/Apache24", "D:/Apache24", "C:/Program Files/Apache Software Foundation/Apache2.4"], "bin/httpd.exe"),
             ("php73", &["C:/php", "D:/php", "C:/xampp/php"], "php-cgi.exe"),
         ];
 
         for (service_id, dirs, marker) in checks {
-            // Check explicit directories
+            // 1. App-managed directory first (survives DB resets, portable installs).
+            let managed_dir = self.data_dir.join("server").join(service_id);
+            let managed_marker = managed_dir.join(marker);
+            if managed_marker.exists() {
+                let p = managed_dir.to_string_lossy().replace('\\', "/");
+                info!("detect_local_services: found {} in app-managed dir {}", service_id, p);
+                found.insert(service_id.to_string(), p);
+                continue;
+            }
+
+            // 2. Well-known system directories.
             for dir in *dirs {
                 let marker_path = PathBuf::from(dir).join(marker);
                 if marker_path.exists() {
@@ -398,8 +417,9 @@ default-character-set=utf8
                 }
             }
 
-            // If not found in explicit dirs, check PATH
-            if !found.contains_key(*service_id) && !dirs.is_empty() {
+            // 3. System PATH. Minio ships a single exe, so it is most commonly on
+            //    PATH; always probe PATH regardless of whether system dirs matched.
+            if !found.contains_key(*service_id) {
                 if let Ok(output) = silent_command("where").arg(marker).output() {
                     if output.status.success() {
                         let path_str = String::from_utf8_lossy(&output.stdout);
@@ -415,6 +435,27 @@ default-character-set=utf8
         }
 
         found
+    }
+
+    /// Register a service detected on disk into the DB (marks `installed = 1`
+    /// and fills exe/args/config_file). Used by run_auto_setup when a local
+    /// installation is found, so the UI no longer shows "未安装".
+    pub fn register_detected_service(&self, software_id: &str, service_id: &str, install_path: &str) -> Result<()> {
+        info!("register_detected_service: software_id={} service_id={} path={}", software_id, service_id, install_path);
+        match service_id {
+            "nginx" => {
+                self.import_runtime(RuntimeType::Nginx, install_path, Some(80))?;
+            }
+            "php73" | "php" => {
+                self.import_runtime(RuntimeType::Php, install_path, None)?;
+            }
+            _ => {
+                self.register_generic_service(software_id, service_id, install_path)?;
+            }
+        }
+        // Mark the software row installed too, so the Software page agrees.
+        self.db.update_software_bundled_installed(software_id, install_path)?;
+        Ok(())
     }
 
     /// Download and install software from its download_url.

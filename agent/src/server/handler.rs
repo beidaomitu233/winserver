@@ -80,13 +80,18 @@ impl RequestHandler {
             }
         }
 
-        // 3. Auto-install bundled runtimes for services that have no local version and are not yet installed
+        // 3. Auto-install bundled runtimes for services that have no local version and are not yet installed.
+        //    For locally-detected services, register them into the DB so they
+        //    show as installed (instead of leaving installed=0 forever).
         for sw in &software_list {
             if sw.installed {
                 continue;
             }
-            if local_services.contains_key(&sw.service_id) {
-                info!("run_auto_setup: {} has local installation at {}, skipping bundled install", sw.id, local_services[&sw.service_id]);
+            if let Some(install_path) = local_services.get(&sw.service_id) {
+                info!("run_auto_setup: {} found locally at {}, registering as installed", sw.id, install_path);
+                if let Err(e) = self.runtime_manager.register_detected_service(&sw.id, &sw.service_id, install_path) {
+                    warn!("run_auto_setup: failed to register local {}: {}", sw.id, e);
+                }
                 continue;
             }
 

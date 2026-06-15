@@ -13,7 +13,6 @@ import DashboardPage from './pages/DashboardPage.vue'
 import SitesPage from './pages/SitesPage.vue'
 import DatabasePage from './pages/DatabasePage.vue'
 import SoftwarePage from './pages/SoftwarePage.vue'
-import FilesPage from './pages/FilesPage.vue'
 import LogsPage from './pages/LogsPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
 import { useServiceStore } from './stores/useServiceStore'
@@ -178,7 +177,6 @@ function toastIcon(type: Toast['type']) {
         <SitesPage v-else-if="currentPage === 'sites'" />
         <DatabasePage v-else-if="currentPage === 'database'" />
         <SoftwarePage v-else-if="currentPage === 'software'" />
-        <FilesPage v-else-if="currentPage === 'files'" />
         <LogsPage v-else-if="currentPage === 'logs'" />
         <SettingsPage v-else-if="currentPage === 'settings'" />
       </section>
