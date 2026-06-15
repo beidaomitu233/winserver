@@ -68,8 +68,8 @@ pub fn init_app(app_dir: PathBuf, resource_dir: PathBuf) -> App {
     let config_json_path = data_dir.join("config.json");
     db.import_from_config_json(&config_json_path).expect("Failed to import config.json");
 
-    let process_manager = Arc::new(ProcessManager::new(db.clone()));
     let port_manager = Arc::new(PortManager::new());
+    let process_manager = Arc::new(ProcessManager::new(db.clone(), port_manager.clone()));
     let hosts_manager = Arc::new(HostsManager::new());
     let site_manager = Arc::new(SiteManager::new(
         data_dir.clone(),
@@ -104,10 +104,19 @@ pub fn init_app(app_dir: PathBuf, resource_dir: PathBuf) -> App {
 pub fn run_auto_setup_async(app: &App, app_dir: PathBuf, resource_dir: PathBuf) {
     let init_state = app.init_state.clone();
     let handler = app.handler.clone();
+    let process_manager = app.process_manager.clone();
 
     tauri::async_runtime::spawn(async move {
         let runtime_dir = resolve_runtime_dir(&app_dir, &resource_dir);
 
+        // Step 1: Reconcile process tracking
+        init_state.set_phase("reconciling").await;
+        info!("run_auto_setup_async: reconciling process tracking");
+        if let Err(e) = process_manager.reconcile_process_tracking().await {
+            warn!("run_auto_setup_async: reconcile failed: {}", e);
+        }
+
+        // Step 2: Detect local services and install bundled runtimes
         init_state.set_phase("detecting").await;
         info!("run_auto_setup_async: starting local service detection");
 

@@ -298,3 +298,8 @@ pub async fn open_file(path: String) -> Result<serde_json::Value, String> {
     std::process::Command::new("notepad.exe").arg(&path).spawn().map_err(|e| e.to_string())?;
     Ok(json!({ "message": format!("已打开: {}", path) }))
 }
+
+#[tauri::command]
+pub async fn kill_process(state: State<'_, Arc<App>>, pid: u32) -> Result<serde_json::Value, String> {
+    call_handler(&state, "port.killProcess", json!({ "pid": pid })).await
+}

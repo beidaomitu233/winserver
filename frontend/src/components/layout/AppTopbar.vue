@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { inject, type Ref } from 'vue'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
 const currentPage = inject<Ref<string>>('currentPage')!
 const theme = inject<Ref<'light' | 'dark'>>('theme')!
@@ -16,6 +17,18 @@ const pageTitles: Record<string, [string, string]> = {
 
 function toggleTheme() {
   theme.value = theme.value === 'light' ? 'dark' : 'light'
+}
+
+async function minimizeWindow() {
+  await getCurrentWindow().minimize()
+}
+
+async function maximizeWindow() {
+  await getCurrentWindow().toggleMaximize()
+}
+
+async function closeWindow() {
+  await getCurrentWindow().close()
 }
 </script>
 
@@ -37,6 +50,17 @@ function toggleTheme() {
       </button>
       <button class="icon-btn" title="切换主题" @click="toggleTheme">
         <svg class="icon"><use :href="theme === 'dark' ? '#i-sun' : '#i-moon'"></use></svg>
+      </button>
+    </div>
+    <div class="window-controls">
+      <button class="window-btn" title="最小化" @click="minimizeWindow">
+        <svg class="icon icon-sm" viewBox="0 0 12 12"><line x1="0" y1="6" x2="12" y2="6" stroke="currentColor" stroke-width="1.5"/></svg>
+      </button>
+      <button class="window-btn" title="最大化" @click="maximizeWindow">
+        <svg class="icon icon-sm" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+      </button>
+      <button class="window-btn close" title="关闭" @click="closeWindow">
+        <svg class="icon icon-sm" viewBox="0 0 12 12"><line x1="2" y1="2" x2="10" y2="10" stroke="currentColor" stroke-width="1.5"/><line x1="10" y1="2" x2="2" y2="10" stroke="currentColor" stroke-width="1.5"/></svg>
       </button>
     </div>
   </header>
