@@ -19,5 +19,9 @@ export function useToast() {
     }, 3200)
   }
 
-  return { toasts, show }
+  function showToast(type: Toast['type'], title: string, message = '') {
+    show(title, message, type)
+  }
+
+  return { toasts, show, showToast }
 }

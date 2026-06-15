@@ -81,6 +81,7 @@ pub fn run() {
             commands::software_detect_local,
             commands::runtime_import,
             commands::open_folder,
+            commands::kill_process,
             commands::open_url,
             commands::open_file,
         ])

@@ -283,6 +283,11 @@ pub async fn open_folder(path: String) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
+pub async fn kill_process(state: State<'_, Arc<App>>, pid: u32) -> Result<serde_json::Value, String> {
+    call_handler(&state, "port.killProcess", json!({ "pid": pid })).await
+}
+
+#[tauri::command]
 pub async fn open_url(url: String) -> Result<serde_json::Value, String> {
     std::process::Command::new("cmd.exe").args(["/c", "start", "", &url]).spawn().map_err(|e| e.to_string())?;
     Ok(json!({ "message": format!("已打开: {}", url) }))

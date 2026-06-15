@@ -139,6 +139,7 @@ impl RequestHandler {
             "site.enable" => self.handle_site_enable(&params).await,
             "site.disable" => self.handle_site_disable(&params).await,
             "port.check" => self.handle_port_check(&params).await,
+            "port.killProcess" => self.handle_port_kill_process(&params).await,
             "resource.get" => self.handle_resource_get().await,
             "log.list" => self.handle_log_list(&params).await,
             "log.clear" => self.handle_log_clear(&params).await,
@@ -385,6 +386,13 @@ impl RequestHandler {
             }
         }
         Ok(serde_json::to_value(result)?)
+    }
+
+    async fn handle_port_kill_process(&self, params: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let pid = params["pid"].as_u64()
+            .ok_or_else(|| anyhow::anyhow!("Missing pid"))? as u32;
+        self.port_manager.kill_process(pid)?;
+        Ok(json!({ "message": format!("进程 {} 已终止", pid) }))
     }
 
     async fn handle_resource_get(&self) -> anyhow::Result<serde_json::Value> {

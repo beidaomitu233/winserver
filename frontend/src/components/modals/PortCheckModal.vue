@@ -9,6 +9,7 @@ const emit = defineEmits<{ close: [] }>()
 const port = ref<number | string>('')
 const result = ref<PortCheckResult | null>(null)
 const checking = ref(false)
+const killing = ref(false)
 const errorMessage = ref('')
 
 async function checkPort() {
@@ -23,6 +24,21 @@ async function checkPort() {
     errorMessage.value = typeof error === 'string' ? error : '端口检测失败'
   } finally {
     checking.value = false
+  }
+}
+
+async function killProcess() {
+  if (!result.value?.pid) return
+  killing.value = true
+  try {
+    await invoke('kill_process', { pid: result.value.pid })
+    errorMessage.value = `进程 ${result.value.pid} 已终止`
+    result.value = null
+    await checkPort()
+  } catch (error) {
+    errorMessage.value = typeof error === 'string' ? error : '终止进程失败'
+  } finally {
+    killing.value = false
   }
 }
 
@@ -77,6 +93,12 @@ function ownerText(value: PortCheckResult) {
             <div v-if="result.pid" class="port-result-detail">
               进程 PID: {{ result.pid }}
               <span v-if="result.process_name">({{ result.process_name }})</span>
+            </div>
+            <div v-if="result.pid && result.owner_type !== 'winserver_service'" style="margin-top: 12px; display: flex; gap: 8px;">
+              <button class="btn danger small" :disabled="killing" @click="killProcess">
+                {{ killing ? '正在终止...' : '终止进程' }}
+              </button>
+              <button class="btn ghost small" @click="emit('close')">取消</button>
             </div>
           </template>
           <template v-else>
