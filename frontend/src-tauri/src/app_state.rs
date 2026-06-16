@@ -68,8 +68,8 @@ pub fn init_app(app_dir: PathBuf, resource_dir: PathBuf) -> App {
     let config_json_path = data_dir.join("config.json");
     db.import_from_config_json(&config_json_path).expect("Failed to import config.json");
 
-    let process_manager = Arc::new(ProcessManager::new(db.clone()));
     let port_manager = Arc::new(PortManager::new());
+    let process_manager = Arc::new(ProcessManager::new(db.clone(), port_manager.clone()));
     let hosts_manager = Arc::new(HostsManager::new());
     let site_manager = Arc::new(SiteManager::new(
         data_dir.clone(),
