@@ -842,6 +842,13 @@ mod tests {
         configure_php_service(db, "php-test", node, dir, port);
     }
 
+    fn make_process_manager(db: Arc<Database>) -> Arc<ProcessManager> {
+        Arc::new(ProcessManager::new(
+            db,
+            Arc::new(super::super::PortManager::new()),
+        ))
+    }
+
     #[tokio::test]
     async fn create_site_writes_config_hosts_and_database() {
         let Some(node) = node_exe() else {
@@ -865,7 +872,7 @@ mod tests {
         configure_nginx(&db, &nginx_root, &nginx_exe, site_port);
         configure_php(&db, &node, &php_dir, php_port);
 
-        let process_manager = Arc::new(ProcessManager::new(db.clone()));
+        let process_manager = make_process_manager(db.clone());
         let hosts_manager = Arc::new(HostsManager::with_path(hosts_path.clone()));
         let site_manager = SiteManager::new(
             data_dir.clone(),
@@ -926,7 +933,7 @@ mod tests {
         configure_nginx(&db, &nginx_root, &nginx_exe, site_port);
         configure_php(&db, &node, &php_dir, php_port);
 
-        let process_manager = Arc::new(ProcessManager::new(db.clone()));
+        let process_manager = make_process_manager(db.clone());
         let hosts_manager = Arc::new(HostsManager::with_path(hosts_path.clone()));
         let site_manager = SiteManager::new(
             data_dir,
@@ -998,7 +1005,7 @@ mod tests {
         let vhost = nginx_root.join("conf").join("vhosts").join(format!("switch_local_{}.conf", site_port));
         fs::write(&vhost, "fastcgi_pass 127.0.0.1:9001;\n").expect("write old vhost");
 
-        let process_manager = Arc::new(ProcessManager::new(db.clone()));
+        let process_manager = make_process_manager(db.clone());
         let hosts_manager = Arc::new(HostsManager::with_path(data_dir.join("hosts")));
         let site_manager = SiteManager::new(data_dir, process_manager.clone(), hosts_manager, db.clone())
             .expect("site manager");
@@ -1054,7 +1061,7 @@ mod tests {
         let original = "fastcgi_pass 127.0.0.1:9001;\n";
         fs::write(&vhost, original).expect("write old vhost");
 
-        let process_manager = Arc::new(ProcessManager::new(db.clone()));
+        let process_manager = make_process_manager(db.clone());
         let hosts_manager = Arc::new(HostsManager::with_path(data_dir.join("hosts")));
         let site_manager = SiteManager::new(data_dir, process_manager.clone(), hosts_manager, db.clone())
             .expect("site manager");
@@ -1108,7 +1115,7 @@ mod tests {
         fs::write(&vhost, "server_name delete.local;\n").expect("write vhost");
         fs::write(&other_vhost, "server_name other.local;\n").expect("write other vhost");
 
-        let process_manager = Arc::new(ProcessManager::new(db.clone()));
+        let process_manager = make_process_manager(db.clone());
         let hosts_manager = Arc::new(HostsManager::with_path(hosts_path.clone()));
         let site_manager = SiteManager::new(data_dir, process_manager, hosts_manager, db.clone())
             .expect("site manager");
@@ -1158,7 +1165,7 @@ mod tests {
         let original = "server_name keep.local;\n";
         fs::write(&vhost, original).expect("write vhost");
 
-        let process_manager = Arc::new(ProcessManager::new(db.clone()));
+        let process_manager = make_process_manager(db.clone());
         let hosts_manager = Arc::new(HostsManager::with_path(hosts_path.clone()));
         let site_manager = SiteManager::new(data_dir, process_manager, hosts_manager, db.clone())
             .expect("site manager");
@@ -1210,7 +1217,7 @@ mod tests {
         })
         .expect("insert site");
 
-        let process_manager = Arc::new(ProcessManager::new(db.clone()));
+        let process_manager = make_process_manager(db.clone());
         let hosts_manager = Arc::new(HostsManager::with_path(hosts_path.clone()));
         let site_manager = SiteManager::new(
             data_dir.clone(),
@@ -1265,7 +1272,7 @@ mod tests {
         })
         .expect("insert site");
 
-        let process_manager = Arc::new(ProcessManager::new(db.clone()));
+        let process_manager = make_process_manager(db.clone());
         let hosts_manager = Arc::new(HostsManager::with_path(hosts_path.clone()));
         let site_manager = SiteManager::new(data_dir, process_manager, hosts_manager, db.clone())
             .expect("site manager");

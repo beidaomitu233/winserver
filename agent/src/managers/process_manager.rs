@@ -996,6 +996,10 @@ mod tests {
         );
     }
 
+    fn make_process_manager(db: Arc<Database>) -> ProcessManager {
+        ProcessManager::new(db, Arc::new(super::super::PortManager::new()))
+    }
+
     #[tokio::test]
     async fn start_and_stop_service_verifies_pid_and_port() {
         let Some(node) = node_exe() else {
@@ -1009,7 +1013,7 @@ mod tests {
         let args = format!("\"{}\"", script.to_string_lossy());
         insert_test_service(&db, "test-listener", &node, &args, &dir, port);
 
-        let manager = ProcessManager::new(db.clone());
+        let manager = make_process_manager(db.clone());
         manager
             .start_service("test-listener")
             .await
@@ -1048,7 +1052,7 @@ mod tests {
         let args = format!("\"{}\"", script.to_string_lossy());
         insert_test_service(&db, "test-conflict", &node, &args, &dir, port);
 
-        let manager = ProcessManager::new(db.clone());
+        let manager = make_process_manager(db.clone());
         let error = manager
             .start_service("test-conflict")
             .await

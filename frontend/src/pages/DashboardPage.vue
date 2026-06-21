@@ -224,6 +224,33 @@ onMounted(async () => {
           <div class="home-kpi-label">运行时间</div>
         </div>
       </div>
+
+      <div class="home-quickbar home-quickbar-v2">
+        <button class="home-quick" @click="$emit('open-create-site')">
+          <svg class="icon icon-sm"><use href="#i-plus" /></svg>
+          新建站点
+        </button>
+        <button class="home-quick" @click="currentPage = 'sites'">
+          <svg class="icon icon-sm"><use href="#i-globe" /></svg>
+          网站
+        </button>
+        <button class="home-quick" @click="currentPage = 'database'">
+          <svg class="icon icon-sm"><use href="#i-database" /></svg>
+          数据库
+        </button>
+        <button class="home-quick" @click="currentPage = 'software'">
+          <svg class="icon icon-sm"><use href="#i-box" /></svg>
+          环境
+        </button>
+        <button class="home-quick" @click="$emit('show-ports')">
+          <svg class="icon icon-sm"><use href="#i-network" /></svg>
+          端口
+        </button>
+        <button class="home-quick" @click="$emit('show-logs')">
+          <svg class="icon icon-sm"><use href="#i-file" /></svg>
+          日志
+        </button>
+      </div>
     </section>
 
     <!-- Workspace -->

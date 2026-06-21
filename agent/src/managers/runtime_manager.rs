@@ -124,9 +124,26 @@ impl RuntimeManager {
             let already_installed = self.db.get_software(software_id).map(|sw| sw.installed).unwrap_or(false);
             if already_installed {
                 info!("install_bundled_runtime: target_dir exists and software already installed, skipping (no-op)");
+                normalize_service_root(&target_dir, service_id)?;
                 let install_path_str = target_dir.to_string_lossy().to_string();
-                if !matches!(service_id.as_str(), "nginx" | "php" | "php73") {
-                    let _ = self.register_generic_service(software_id, service_id, &install_path_str);
+                match service_id.as_str() {
+                    "nginx" => {
+                        self.import_runtime(RuntimeType::Nginx, &install_path_str, None)?;
+                    }
+                    "php" | "php73" => {
+                        self.import_runtime(RuntimeType::Php, &install_path_str, None)?;
+                    }
+                    s if s.starts_with("php") => {
+                        self.import_runtime(RuntimeType::Php, &install_path_str, None)?;
+                    }
+                    _ => {
+                        if let Err(error) = self.register_generic_service(software_id, service_id, &install_path_str) {
+                            self.db.update_service_installed(service_id, false).ok();
+                            self.db.update_software_installed(software_id, false).ok();
+                            self.db.update_software_status(software_id, "failed").ok();
+                            return Err(error.context("已安装服务文件校验失败"));
+                        }
+                    }
                 }
                 return Ok(RuntimeManifest {
                     id: software_id.to_string(),
@@ -180,6 +197,8 @@ impl RuntimeManager {
                 }
             }
         }
+
+        normalize_service_root(&target_dir, service_id)?;
 
         // Register the service
         let install_path_str = target_dir.to_string_lossy().to_string();
@@ -262,7 +281,7 @@ impl RuntimeManager {
         info!("extract_zip_to: zip has {} entries", archive.len());
 
         let entry_names: Vec<String> = (0..archive.len())
-            .filter_map(|i| archive.by_index(i).ok().map(|e| e.name().to_string()))
+            .filter_map(|i| archive.by_index(i).ok().map(|e| normalize_zip_entry_name(e.name())))
             .collect();
         let top_dir = self.detect_top_dir_from_names(&entry_names);
         info!("extract_zip_to: top_dir={:?}", top_dir);
@@ -273,7 +292,7 @@ impl RuntimeManager {
         let mut file_count = 0u32;
         for i in 0..archive2.len() {
             let mut entry = archive2.by_index(i)?;
-            let entry_path = entry.name().to_string();
+            let entry_path = normalize_zip_entry_name(entry.name());
             let relative_path = if let Some(ref prefix) = top_dir {
                 match entry_path.strip_prefix(prefix.as_str()) {
                     Some(rest) => rest.to_string(),
@@ -402,6 +421,7 @@ default-character-set=utf8
         for (service_id, dirs, marker) in checks {
             // 1. App-managed directory first (survives DB resets, portable installs).
             let managed_dir = self.data_dir.join("server").join(service_id);
+            let _ = normalize_service_root(&managed_dir, service_id);
             let managed_marker = managed_dir.join(marker);
             if managed_marker.exists() {
                 let p = managed_dir.to_string_lossy().replace('\\', "/");
@@ -585,7 +605,7 @@ default-character-set=utf8
 
             // First pass: collect entry names and detect top-level directory
             let entry_names: Vec<String> = (0..archive.len())
-                .filter_map(|i| archive.by_index(i).ok().map(|e| e.name().to_string()))
+                .filter_map(|i| archive.by_index(i).ok().map(|e| normalize_zip_entry_name(e.name())))
                 .collect();
             let top_dir = self.detect_top_dir_from_names(&entry_names);
             info!("do_download_and_install: top_dir={:?}", top_dir);
@@ -597,7 +617,7 @@ default-character-set=utf8
             let mut file_count = 0u32;
             for i in 0..archive2.len() {
                 let mut entry = archive2.by_index(i)?;
-                let entry_path = entry.name().to_string();
+                let entry_path = normalize_zip_entry_name(entry.name());
                 let relative_path = if let Some(ref prefix) = top_dir {
                     match entry_path.strip_prefix(prefix.as_str()) {
                         Some(rest) => rest.to_string(),
@@ -632,6 +652,8 @@ default-character-set=utf8
             }
             info!("do_download_and_install: extracted {} files", file_count);
         }
+
+        normalize_service_root(target_dir, service_id)?;
 
         // Determine runtime type and run import logic
         let install_path_str = target_dir.to_string_lossy().to_string();
@@ -760,6 +782,9 @@ default-character-set=utf8
 
         let exe_exists = Path::new(&exe).exists();
         info!("register_generic_service: exe={}, exists={}", exe, exe_exists);
+        if !exe_exists {
+            anyhow::bail!("安装目录缺少服务可执行文件：{}", exe);
+        }
 
         self.db.conn(|conn| {
             let now = chrono::Utc::now().to_rfc3339();
@@ -1284,6 +1309,92 @@ fn copy_dir_contents(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+fn normalize_zip_entry_name(name: &str) -> String {
+    name.replace('\\', "/")
+}
+
+fn service_marker_path(service_id: &str) -> Option<&'static str> {
+    match service_id {
+        "nginx" => Some("nginx.exe"),
+        "apache" => Some("bin/httpd.exe"),
+        "mysql80" | "mysql57" => Some("bin/mysqld.exe"),
+        "redis" => Some("redis-server.exe"),
+        "minio" => Some("minio.exe"),
+        "pgsql" => Some("bin/pg_ctl.exe"),
+        "php" | "php73" => Some("php-cgi.exe"),
+        s if s.starts_with("php") => Some("php-cgi.exe"),
+        _ => None,
+    }
+}
+
+fn has_service_marker(root: &Path, service_id: &str) -> bool {
+    service_marker_path(service_id)
+        .map(|marker| root.join(marker).exists())
+        .unwrap_or(false)
+}
+
+fn normalize_service_root(root: &Path, service_id: &str) -> Result<()> {
+    if !root.is_dir() || service_marker_path(service_id).is_none() {
+        return Ok(());
+    }
+
+    for _ in 0..8 {
+        if has_service_marker(root, service_id) {
+            return Ok(());
+        }
+
+        let entries = fs::read_dir(root)?.collect::<std::result::Result<Vec<_>, _>>()?;
+        let has_files = entries.iter().any(|entry| entry.path().is_file());
+        let dirs = entries.iter().filter(|entry| entry.path().is_dir()).collect::<Vec<_>>();
+
+        if has_files || dirs.len() != 1 {
+            return Ok(());
+        }
+
+        let child = dirs[0].path();
+        let child_for_log = child.clone();
+        let mut staging = root.join(".winserver-flattening");
+        let mut suffix = 0u8;
+        while staging.exists() {
+            suffix += 1;
+            staging = root.join(format!(".winserver-flattening-{}", suffix));
+        }
+
+        fs::rename(&child, &staging).with_context(|| {
+            format!(
+                "failed to stage wrapper directory {} as {}",
+                child.display(),
+                staging.display()
+            )
+        })?;
+
+        let child_entries = fs::read_dir(&staging)?.collect::<std::result::Result<Vec<_>, _>>()?;
+        for entry in child_entries {
+            let source = entry.path();
+            let destination = root.join(entry.file_name());
+            if destination.exists() {
+                anyhow::bail!("无法归一运行目录，目标已存在：{}", destination.display());
+            }
+            fs::rename(&source, &destination).with_context(|| {
+                format!(
+                    "failed to move {} to {}",
+                    source.display(),
+                    destination.display()
+                )
+            })?;
+        }
+        fs::remove_dir(&staging)
+            .with_context(|| format!("failed to remove {}", staging.display()))?;
+        info!(
+            "normalize_service_root: flattened {} wrapper directory {}",
+            service_id,
+            child_for_log.display()
+        );
+    }
+
+    Ok(())
+}
+
 /// Tracks download/install progress for a software download operation.
 pub struct DownloadProgress {
     total: AtomicU64,
@@ -1528,5 +1639,50 @@ mod tests {
             .expect("config files")
             .iter()
             .any(|file| file.id == "minio.env" && file.exists));
+    }
+
+    #[test]
+    fn install_bundled_runtime_flattens_nested_wrappers_and_registers_service() {
+        let db = make_db();
+        let data_dir = make_data_dir();
+        let runtime_dir = make_data_dir().join("bundles");
+        let bundled_leaf = runtime_dir.join("redis-up").join("_up").join("_up");
+        fs::create_dir_all(&bundled_leaf).expect("create nested bundled dir");
+        fs::write(bundled_leaf.join("redis-server.exe"), "").expect("write redis exe");
+        fs::write(bundled_leaf.join("redis.conf"), "port 6379\n").expect("write redis conf");
+
+        let manager = RuntimeManager::new(data_dir.clone(), db.clone());
+        let manifest = manager
+            .install_bundled_runtime("redis", &runtime_dir)
+            .expect("install redis bundled runtime");
+
+        let target = data_dir.join("server").join("redis");
+        assert!(manifest.installed);
+        assert!(target.join("redis-server.exe").exists());
+        assert!(target.join("redis.conf").exists());
+        assert!(!target.join("_up").exists());
+
+        let service = db.get_service_config("redis").expect("redis service config");
+        assert!(service.installed);
+        let target_str = target.to_string_lossy().replace('\\', "/");
+        assert_eq!(service.cwd.as_deref(), Some(target_str.as_str()));
+        assert!(db.get_software("redis").expect("redis software row").installed);
+    }
+
+    #[test]
+    fn register_generic_service_rejects_missing_executable() {
+        let db = make_db();
+        let data_dir = make_data_dir();
+        let root = data_dir.join("redis-missing-exe");
+        fs::create_dir_all(&root).expect("create redis dir");
+
+        let manager = RuntimeManager::new(data_dir, db.clone());
+        let error = manager
+            .register_generic_service("redis", "redis", &root.to_string_lossy())
+            .expect_err("missing redis-server.exe should fail");
+
+        assert!(error.to_string().contains("服务可执行文件"));
+        let service = db.get_service_config("redis").expect("redis service config");
+        assert!(!service.installed);
     }
 }

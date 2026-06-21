@@ -33,8 +33,8 @@ async fn bundled_install_flow_test() {
     let data = tmp_dir();
     let db = Arc::new(Database::new(&data.join("ws.db")).expect("db"));
     db.run_migrations().expect("mig");
-    let pm = Arc::new(ProcessManager::new(db.clone()));
     let portm = Arc::new(PortManager::new());
+    let pm = Arc::new(ProcessManager::new(db.clone(), portm.clone()));
     let hosts_path = data.join("hosts");
     fs::write(&hosts_path, "127.0.0.1 localhost
 ").ok();

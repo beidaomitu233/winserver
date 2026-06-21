@@ -72,8 +72,8 @@ async fn prd_acceptance_all_13_steps() {
     let db = Arc::new(Database::new(&data_dir.join("winserver.db")).expect("open db"));
     db.run_migrations().expect("migrate db");
 
-    let process_manager = Arc::new(ProcessManager::new(db.clone()));
     let port_manager = Arc::new(PortManager::new());
+    let process_manager = Arc::new(ProcessManager::new(db.clone(), port_manager.clone()));
     let hosts_manager = Arc::new(HostsManager::with_path(hosts_path.clone()));
     let site_manager = Arc::new(
         SiteManager::new(data_dir.clone(), process_manager.clone(), hosts_manager.clone(), db.clone())
@@ -263,8 +263,8 @@ async fn prd_acceptance_all_13_steps() {
 
     // Create new handler from same database (simulates restart)
     let db2 = Arc::new(Database::new(&data_dir.join("winserver.db")).expect("open db on restart"));
-    let pm2 = Arc::new(ProcessManager::new(db2.clone()));
     let port2 = Arc::new(PortManager::new());
+    let pm2 = Arc::new(ProcessManager::new(db2.clone(), port2.clone()));
     let hm2 = Arc::new(HostsManager::with_path(hosts_path.clone()));
     let sm2 = Arc::new(SiteManager::new(data_dir.clone(), pm2.clone(), hm2.clone(), db2.clone()).expect("site manager"));
     let rm2 = Arc::new(RuntimeManager::new(data_dir.clone(), db2.clone()));

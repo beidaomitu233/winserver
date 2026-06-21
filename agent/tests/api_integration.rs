@@ -43,8 +43,8 @@ fn setup() -> (Arc<RequestHandler>, PathBuf) {
         )?;
         Ok(())
     }).expect("point hosts config at test file");
-    let pm = Arc::new(ProcessManager::new(db.clone()));
     let portm = Arc::new(PortManager::new());
+    let pm = Arc::new(ProcessManager::new(db.clone(), portm.clone()));
     let hm = Arc::new(HostsManager::with_path(hosts_path));
     let sm = Arc::new(SiteManager::new(data.clone(), pm.clone(), hm.clone(), db.clone()).expect("sm"));
     let rm = Arc::new(RuntimeManager::new(data.clone(), db.clone()));
