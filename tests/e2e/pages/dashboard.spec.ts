@@ -60,6 +60,16 @@ test.describe('Dashboard Page', () => {
     }
   })
 
+  test('Dashboard new site quick action opens create modal', async ({ page }) => {
+    await page.locator('.home-quick').filter({ hasText: '\u65b0\u5efa\u7ad9\u70b9' }).click()
+    const modal = await waitForModal(page)
+    const visible = await modal.isVisible().catch(() => false)
+    await recordStep(page, P, 'Quick new site modal', visible, visible ? 'Opened' : 'Missing')
+    expect(visible).toBeTruthy()
+    await assertElementVisible(page, P, '.modal:visible input[placeholder="demo.local"]', 'Create site domain')
+    await closeModal(page)
+  })
+
   test('Dashboard shows service grid', async ({ page }) => {
     const services = page.locator('.home-service-row')
     const count = await services.count()

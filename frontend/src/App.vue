@@ -24,6 +24,7 @@ import { useToast, type Toast } from './composables/useToast'
 import type { SystemResource } from './types'
 
 const currentPage = ref('dashboard')
+const createSiteSignal = ref(0)
 const { theme } = useTheme()
 const { toasts } = useToast()
 const tauriWindow = getCurrentWindow()
@@ -96,6 +97,11 @@ function openPortCheck() {
 }
 
 provide('openPortCheck', openPortCheck)
+
+function openCreateSite() {
+  currentPage.value = 'sites'
+  createSiteSignal.value += 1
+}
 
 async function fetchResource() {
   try {
@@ -218,11 +224,11 @@ function toastIcon(type: Toast['type']) {
       <section class="content" id="pageContent">
         <DashboardPage
           v-if="currentPage === 'dashboard'"
-          @open-create-site="currentPage = 'sites'"
+          @open-create-site="openCreateSite"
           @show-logs="currentPage = 'logs'"
           @show-ports="openPortCheck"
         />
-        <SitesPage v-else-if="currentPage === 'sites'" />
+        <SitesPage v-else-if="currentPage === 'sites'" :create-signal="createSiteSignal" />
         <DatabasePage v-else-if="currentPage === 'database'" />
         <SoftwarePage v-else-if="currentPage === 'software'" />
         <LogsPage v-else-if="currentPage === 'logs'" />

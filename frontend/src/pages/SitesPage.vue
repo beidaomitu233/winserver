@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, inject } from 'vue'
+import { ref, computed, onMounted, inject, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useSiteStore } from '../stores/useSiteStore'
 import { useServiceStore } from '../stores/useServiceStore'
@@ -7,6 +7,7 @@ import type { SiteInfo } from '../types'
 
 const siteStore = useSiteStore()
 const serviceStore = useServiceStore()
+const props = defineProps<{ createSignal?: number }>()
 const openConfigEditor = inject<(fileId: string, label: string, filePath: string) => void>('openConfigEditor')!
 const searchQuery = ref('')
 const showCreateModal = ref(false)
@@ -70,6 +71,15 @@ function openCreateModal() {
   showCreateModal.value = true
 }
 
+watch(
+  () => props.createSignal,
+  (value, oldValue) => {
+    if (value && value !== oldValue) {
+      openCreateModal()
+    }
+  }
+)
+
 async function handleCreateSite() {
   isCreating.value = true
   try {
@@ -120,6 +130,9 @@ async function openSiteConfig(site: SiteInfo) {
 onMounted(() => {
   siteStore.fetchState()
   serviceStore.fetchState()
+  if (props.createSignal) {
+    openCreateModal()
+  }
 })
 </script>
 
