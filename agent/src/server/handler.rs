@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::path::Path;
 use std::io::{Read, Seek, SeekFrom};
@@ -17,6 +17,21 @@ use crate::managers::{
 struct CachedState {
     state: AppState,
     at: Instant,
+}
+
+fn prefer_bundled_runtime(software_id: &str, service_id: &str) -> bool {
+    matches!(
+        (software_id, service_id),
+        ("mysql80", "mysql80") | ("redis", "redis") | ("minio", "minio")
+    )
+}
+
+fn should_skip_local_service_registration(
+    software_id: &str,
+    service_id: &str,
+    preferred_bundled_service_ids: &HashSet<String>,
+) -> bool {
+    preferred_bundled_service_ids.contains(service_id) && !prefer_bundled_runtime(software_id, service_id)
 }
 
 pub struct RequestHandler {
@@ -83,7 +98,31 @@ impl RequestHandler {
         // 3. Auto-install bundled runtimes for services that have no local version and are not yet installed.
         //    For locally-detected services, register them into the DB so they
         //    show as installed (instead of leaving installed=0 forever).
+        let preferred_bundled_service_ids: HashSet<String> = software_list
+            .iter()
+            .filter(|sw| prefer_bundled_runtime(&sw.id, &sw.service_id))
+            .filter(|sw| self.runtime_manager.find_bundled_file(&sw.id, runtime_dir).is_some())
+            .map(|sw| sw.service_id.clone())
+            .collect();
+
         for sw in &software_list {
+            let has_bundled = self.runtime_manager.find_bundled_file(&sw.id, runtime_dir).is_some();
+            if has_bundled && prefer_bundled_runtime(&sw.id, &sw.service_id) {
+                info!("run_auto_setup: installing preferred bundled runtime for {}", sw.id);
+                if let Err(e) = self.runtime_manager.install_bundled_runtime(&sw.id, runtime_dir) {
+                    warn!("run_auto_setup: failed to install preferred bundled {}: {}", sw.id, e);
+                }
+                continue;
+            }
+
+            if should_skip_local_service_registration(&sw.id, &sw.service_id, &preferred_bundled_service_ids) {
+                info!(
+                    "run_auto_setup: skipping local registration for {} because service {} is managed by a preferred bundled runtime",
+                    sw.id, sw.service_id
+                );
+                continue;
+            }
+
             if sw.installed {
                 if matches!(sw.service_id.as_str(), "redis" | "minio") {
                     if let Some(install_path) = sw.install_path.as_deref().filter(|path| !path.trim().is_empty()) {
@@ -102,7 +141,7 @@ impl RequestHandler {
                 continue;
             }
 
-            if self.runtime_manager.find_bundled_file(&sw.id, runtime_dir).is_none() {
+            if !has_bundled {
                 continue;
             }
 
@@ -1581,8 +1620,9 @@ mod tests {
     use super::{
         classify_error, ensure_child_file, parse_minio_env, parse_redis_conf, quote_mysql_ident,
         quote_mysql_string, read_log_tail, redact_secret, render_minio_env, render_redis_conf,
-        validate_mysql_identifier,
+        should_skip_local_service_registration, validate_mysql_identifier, prefer_bundled_runtime,
     };
+    use std::collections::HashSet;
     use std::fs;
     use uuid::Uuid;
 
@@ -1602,6 +1642,24 @@ mod tests {
 
         let missing = read_log_tail(&path.with_extension("missing"), "", 128).expect("missing log");
         assert!(missing[0].contains("日志文件不存在"));
+    }
+
+    #[test]
+    fn core_services_prefer_packaged_bundles_over_external_dirs() {
+        assert!(prefer_bundled_runtime("mysql80", "mysql80"));
+        assert!(prefer_bundled_runtime("redis", "redis"));
+        assert!(prefer_bundled_runtime("minio", "minio"));
+        assert!(!prefer_bundled_runtime("mysql57", "mysql57"));
+        assert!(!prefer_bundled_runtime("nginx", "nginx"));
+    }
+
+    #[test]
+    fn auxiliary_software_does_not_override_preferred_bundled_service() {
+        let preferred = HashSet::from(["minio".to_string()]);
+
+        assert!(should_skip_local_service_registration("mc", "minio", &preferred));
+        assert!(!should_skip_local_service_registration("minio", "minio", &preferred));
+        assert!(!should_skip_local_service_registration("redis", "redis", &preferred));
     }
 
     #[test]

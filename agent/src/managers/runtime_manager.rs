@@ -22,6 +22,14 @@ impl RuntimeManager {
         Self { data_dir, db }
     }
 
+    fn update_bundled_companion_software(&self, software_id: &str, target_dir: &Path, install_path: &str) {
+        if software_id == "minio" && target_dir.join("mc.exe").exists() {
+            if let Err(error) = self.db.update_software_bundled_installed("mc", install_path) {
+                warn!("failed to mark bundled MinIO client as installed: {}", error);
+            }
+        }
+    }
+
     /// List all installed runtimes by scanning the runtimes directory.
     pub fn list_runtimes(&self) -> Result<Vec<RuntimeManifest>> {
         let imported = self.db.list_runtimes()?;
@@ -143,6 +151,7 @@ impl RuntimeManager {
                             self.db.update_software_status(software_id, "failed").ok();
                             return Err(error.context("已安装服务文件校验失败"));
                         }
+                        self.update_bundled_companion_software(software_id, &target_dir, &install_path_str);
                     }
                 }
                 return Ok(RuntimeManifest {
@@ -216,6 +225,7 @@ impl RuntimeManager {
                 }
 
                 self.db.update_software_bundled_installed(software_id, &install_path_str)?;
+                self.update_bundled_companion_software(software_id, &target_dir, &install_path_str);
                 self.db.add_log("software.install_bundled", software_id, true, &format!("bundled install {} complete", software_id))?;
 
                 return Ok(RuntimeManifest {
@@ -328,6 +338,11 @@ impl RuntimeManager {
 
     /// Initialize MySQL data directory if it doesn't exist.
     fn initialize_mysql_if_needed(&self, service_id: &str, install_dir: &Path) -> Result<()> {
+        let my_ini = install_dir.join("my.ini");
+        let ini_content = render_managed_mysql_ini(service_id, install_dir);
+        fs::write(&my_ini, &ini_content)?;
+        info!("initialize_mysql_if_needed: wrote managed my.ini at {}", my_ini.display());
+
         let data_dir = install_dir.join("data");
         if data_dir.exists() {
             info!("initialize_mysql_if_needed: data dir already exists for {}", service_id);
@@ -342,35 +357,10 @@ impl RuntimeManager {
 
         info!("initialize_mysql_if_needed: initializing MySQL data directory for {}", service_id);
 
-        // Generate my.ini if it doesn't exist
-        let my_ini = install_dir.join("my.ini");
-        if !my_ini.exists() {
-            let dir_str = install_dir.to_string_lossy().replace('\\', "/");
-            let port = if service_id == "mysql57" { 3307 } else { 3306 };
-            let ini_content = format!(
-r#"[mysql]
-default-character-set=utf8
-
-[mysqld]
-port={}
-default_authentication_plugin=mysql_native_password
-basedir={}/
-datadir={}/data/
-character-set-server=utf8
-default-storage-engine=InnoDB
-max_connections=200
-innodb_buffer_pool_size=64M
-
-[client]
-port={}
-default-character-set=utf8
-"#, port, dir_str, dir_str, port);
-            fs::write(&my_ini, &ini_content)?;
-            info!("initialize_mysql_if_needed: wrote my.ini");
-        }
-
         // Run mysqld --initialize-insecure
+        let defaults_file = format!("--defaults-file={}", my_ini.to_string_lossy());
         let output = silent_command_path(&mysqld_exe)
+            .arg(defaults_file)
             .args(["--initialize-insecure", "--console"])
             .current_dir(install_dir)
             .stdout(std::process::Stdio::piped())
@@ -379,19 +369,23 @@ default-character-set=utf8
 
         match output {
             Ok(out) => {
-                if out.status.success() {
+                if out.status.success() && data_dir.exists() {
                     info!("initialize_mysql_if_needed: MySQL data directory initialized successfully");
+                    Ok(())
                 } else {
                     let stderr = String::from_utf8_lossy(&out.stderr);
-                    warn!("initialize_mysql_if_needed: MySQL init warning: {}", stderr);
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    anyhow::bail!(
+                        "MySQL 初始化失败：{}{}",
+                        stderr.trim(),
+                        if stdout.trim().is_empty() { String::new() } else { format!(" {}", stdout.trim()) }
+                    );
                 }
             }
             Err(e) => {
-                warn!("initialize_mysql_if_needed: failed to run mysqld --initialize: {}", e);
+                Err(e).context("failed to run mysqld --initialize")
             }
         }
-
-        Ok(())
     }
 
     /// Detect local services already installed on this machine.
@@ -758,7 +752,7 @@ default-character-set=utf8
                 let ini_path = install_dir.join("my.ini");
                 let exe_str = exe_path.to_string_lossy().replace('\\', "/");
                 let ini_str = ini_path.to_string_lossy().replace('\\', "/");
-                let args = format!("--defaults-file={}", ini_str);
+                let args = format!("--defaults-file=\"{}\"", ini_str);
                 (exe_str, args, ini_str)
             }
             "pgsql" => {
@@ -1285,6 +1279,29 @@ MINIO_CONSOLE_PORT=9001
     .to_string()
 }
 
+fn render_managed_mysql_ini(service_id: &str, install_dir: &Path) -> String {
+    let dir_str = install_dir.to_string_lossy().replace('\\', "/");
+    let port = if service_id == "mysql57" { 3307 } else { 3306 };
+    format!(
+r#"[mysql]
+default-character-set=utf8
+
+[mysqld]
+port={}
+default_authentication_plugin=mysql_native_password
+basedir="{}"
+datadir="{}/data"
+character-set-server=utf8
+default-storage-engine=InnoDB
+max_connections=200
+innodb_buffer_pool_size=64M
+
+[client]
+port={}
+default-character-set=utf8
+"#, port, dir_str, dir_str, port)
+}
+
 /// Recursively copy the contents of `src` into `dst` (preserving relative paths).
 /// Used when a bundled runtime ships as an unpacked directory.
 fn copy_dir_contents(src: &Path, dst: &Path) -> Result<()> {
@@ -1667,6 +1684,47 @@ mod tests {
         let target_str = target.to_string_lossy().replace('\\', "/");
         assert_eq!(service.cwd.as_deref(), Some(target_str.as_str()));
         assert!(db.get_software("redis").expect("redis software row").installed);
+    }
+
+    #[test]
+    fn install_bundled_minio_marks_client_tool_in_same_managed_dir() {
+        let db = make_db();
+        let data_dir = make_data_dir();
+        let runtime_dir = make_data_dir().join("bundles");
+        let bundled_minio = runtime_dir.join("minio");
+        fs::create_dir_all(&bundled_minio).expect("create minio bundle");
+        fs::write(bundled_minio.join("minio.exe"), "").expect("write minio exe");
+        fs::write(bundled_minio.join("mc.exe"), "").expect("write mc exe");
+        fs::write(bundled_minio.join("minio.env"), default_minio_env()).expect("write minio env");
+
+        let manager = RuntimeManager::new(data_dir.clone(), db.clone());
+        manager
+            .install_bundled_runtime("minio", &runtime_dir)
+            .expect("install minio bundled runtime");
+
+        let target = data_dir.join("server").join("minio");
+        let target_str = target.to_string_lossy().to_string();
+        let minio = db.get_software("minio").expect("minio software row");
+        let mc = db.get_software("mc").expect("mc software row");
+
+        assert!(target.join("minio.exe").exists());
+        assert!(target.join("mc.exe").exists());
+        assert!(minio.installed);
+        assert!(mc.installed);
+        assert_eq!(minio.install_path.as_deref(), Some(target_str.as_str()));
+        assert_eq!(mc.install_path.as_deref(), Some(target_str.as_str()));
+    }
+
+    #[test]
+    fn managed_mysql_ini_uses_current_install_dir() {
+        let install_dir = PathBuf::from(r"C:\Users\12062\Desktop\WinServer\data\server\mysql80");
+        let ini = render_managed_mysql_ini("mysql80", &install_dir);
+
+        assert!(ini.contains("port=3306"));
+        assert!(ini.contains("basedir=\"C:/Users/12062/Desktop/WinServer/data/server/mysql80\""));
+        assert!(ini.contains("datadir=\"C:/Users/12062/Desktop/WinServer/data/server/mysql80/data\""));
+        assert!(!ini.contains("phpstudy"));
+        assert!(!ini.contains("D:/"));
     }
 
     #[test]

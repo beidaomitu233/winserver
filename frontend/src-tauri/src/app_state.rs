@@ -161,6 +161,12 @@ fn resolve_runtime_dir(app_dir: &std::path::Path, resource_dir: &std::path::Path
         let rd = app_dir.join("runtime");
         info!("init_app: using app_dir/runtime for bundled runtimes: {}", rd.display());
         rd
+    } else if let Some(packaged_runtime_dir) = find_packaged_runtime_dir(app_dir, resource_dir) {
+        info!(
+            "init_app: using packaged runtime directory: {}",
+            packaged_runtime_dir.display()
+        );
+        packaged_runtime_dir
     } else {
         // Try several dev-mode fallbacks relative to the binary
         let candidates = [
@@ -193,9 +199,85 @@ fn resolve_runtime_dir(app_dir: &std::path::Path, resource_dir: &std::path::Path
     }
 }
 
+fn find_packaged_runtime_dir(
+    app_dir: &std::path::Path,
+    resource_dir: &std::path::Path,
+) -> Option<PathBuf> {
+    let candidates = [
+        resource_dir.join("runtime"),
+        resource_dir.join("_up_").join("runtime"),
+        resource_dir.join("_up_").join("_up_").join("runtime"),
+        app_dir.join("runtime"),
+        app_dir.join("_up_").join("runtime"),
+        app_dir.join("_up_").join("_up_").join("runtime"),
+    ];
+    for candidate in candidates {
+        if has_runtime_marker(&candidate) {
+            return Some(candidate);
+        }
+    }
+
+    for base in [resource_dir, app_dir] {
+        if let Some(found) = find_runtime_dir_shallow(base, 4) {
+            return Some(found);
+        }
+    }
+
+    None
+}
+
+fn find_runtime_dir_shallow(base: &std::path::Path, max_depth: usize) -> Option<PathBuf> {
+    if max_depth == 0 || !base.is_dir() {
+        return None;
+    }
+    let entries = std::fs::read_dir(base).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) == Some("runtime")
+            && has_runtime_marker(&path)
+        {
+            return Some(path);
+        }
+        if let Some(found) = find_runtime_dir_shallow(&path, max_depth - 1) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 fn has_runtime_marker(dir: &std::path::Path) -> bool {
     dir.join("nginx-1.26.3.zip").exists()
         || dir.join("minio.exe").exists()
         || dir.join("minio").join("minio.exe").exists()
         || dir.join("redis-7.2.4").join("redis-server.exe").exists()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use uuid::Uuid;
+
+    fn temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("winserver-app-state-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn resolves_nsis_packaged_runtime_under_up_up() {
+        let app_dir = temp_dir();
+        let resource_dir = app_dir.clone();
+        let runtime_dir = app_dir.join("_up_").join("_up_").join("runtime");
+        fs::create_dir_all(runtime_dir.join("redis-7.2.4")).expect("create runtime dir");
+        fs::write(runtime_dir.join("redis-7.2.4").join("redis-server.exe"), "")
+            .expect("write runtime marker");
+
+        let resolved = resolve_runtime_dir(&app_dir, &resource_dir);
+
+        assert_eq!(resolved, runtime_dir);
+    }
 }
