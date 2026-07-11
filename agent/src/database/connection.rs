@@ -381,22 +381,24 @@ impl Database {
         })
     }
 
-    /// Get service config (exe, args, cwd, env, process_name, pid) by service ID.
+    /// Get service config (exe, args, cwd, config_file, env, process_name, pid) by service ID.
     pub fn get_service_config(&self, service_id: &str) -> anyhow::Result<ServiceConfig> {
         self.conn(|conn| {
             let result = conn.query_row(
-                "SELECT exe, args, cwd, process_name, pid, port, installed FROM service_instances WHERE id = ?",
+                "SELECT id, exe, args, cwd, config_file, process_name, pid, port, installed FROM service_instances WHERE id = ?",
                 [service_id],
                 |row| {
                     Ok(ServiceConfig {
-                        exe: row.get(0)?,
-                        args: row.get::<_, Option<String>>(1)?,
-                        cwd: row.get::<_, Option<String>>(2)?,
+                        id: row.get(0)?,
+                        exe: row.get(1)?,
+                        args: row.get::<_, Option<String>>(2)?,
+                        cwd: row.get::<_, Option<String>>(3)?,
+                        config_file: row.get::<_, Option<String>>(4)?,
                         env: None,
-                        process_name: row.get(3)?,
-                        pid: row.get::<_, Option<i32>>(4)?.map(|p| p as u32),
-                        port: row.get::<_, i32>(5)? as u16,
-                        installed: row.get::<_, i32>(6)? != 0,
+                        process_name: row.get(5)?,
+                        pid: row.get::<_, Option<i32>>(6)?.map(|p| p as u32),
+                        port: row.get::<_, i32>(7)? as u16,
+                        installed: row.get::<_, i32>(8)? != 0,
                     })
                 },
             ).optional()?;
@@ -540,74 +542,143 @@ impl Database {
 
     // ---- Databases ----
 
-    /// Insert a new database record.
-    pub fn insert_database(&self, name: &str, user: &str, password: &str) -> anyhow::Result<()> {
+    /// Insert a new database record scoped to a MySQL service instance.
+    pub fn insert_database(
+        &self,
+        name: &str,
+        user: &str,
+        password: &str,
+        mysql_service_id: &str,
+    ) -> anyhow::Result<()> {
         self.conn(|conn| {
             let now = chrono::Utc::now().to_rfc3339();
+            let engine = if mysql_service_id.is_empty() {
+                "mysql".to_string()
+            } else {
+                mysql_service_id.to_string()
+            };
             conn.execute(
-                "INSERT OR REPLACE INTO databases (name, user, password, engine, size, status, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, 'mysql', '', 'active', ?4, ?5)",
-                rusqlite::params![name, user, password, &now, &now],
+                "INSERT OR REPLACE INTO databases
+                    (name, user, password, engine, size, status, mysql_service_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, '', 'active', ?5, ?6, ?7)",
+                rusqlite::params![name, user, password, engine, mysql_service_id, &now, &now],
             )?;
             Ok(())
         })
     }
 
-    /// Delete a database record by name.
-    pub fn delete_database(&self, name: &str) -> anyhow::Result<()> {
+    /// Delete a database record by name (optionally scoped to a MySQL service).
+    pub fn delete_database(&self, name: &str, mysql_service_id: Option<&str>) -> anyhow::Result<()> {
         self.conn(|conn| {
-            conn.execute("DELETE FROM databases WHERE name = ?", [name])?;
+            if let Some(service_id) = mysql_service_id {
+                conn.execute(
+                    "DELETE FROM databases WHERE name = ?1 AND mysql_service_id = ?2",
+                    rusqlite::params![name, service_id],
+                )?;
+            } else {
+                conn.execute("DELETE FROM databases WHERE name = ?", [name])?;
+            }
             Ok(())
         })
     }
 
-    /// List all database records.
-    pub fn list_databases(&self) -> anyhow::Result<Vec<DatabaseInfo>> {
+    /// List database records, optionally filtered by active MySQL service id.
+    pub fn list_databases(&self, mysql_service_id: Option<&str>) -> anyhow::Result<Vec<DatabaseInfo>> {
         self.conn(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT name, user, engine, size, status FROM databases ORDER BY created_at DESC"
-            )?;
-
-            let rows = stmt.query_map([], |row| {
-                Ok(DatabaseInfo {
-                    name: row.get(0)?,
-                    user: row.get(1)?,
-                    engine: row.get(2)?,
-                    size: row.get(3)?,
-                    status: row.get(4)?,
-                })
-            })?;
-
             let mut databases = Vec::new();
-            for row in rows {
-                databases.push(row?);
+            if let Some(service_id) = mysql_service_id {
+                let mut stmt = conn.prepare(
+                    "SELECT name, user, password, engine, size, status, mysql_service_id
+                     FROM databases
+                     WHERE mysql_service_id = ?1
+                     ORDER BY created_at DESC",
+                )?;
+                let rows = stmt.query_map([service_id], |row| {
+                    Ok(DatabaseInfo {
+                        name: row.get(0)?,
+                        user: row.get(1)?,
+                        password: row.get(2)?,
+                        engine: row.get(3)?,
+                        size: row.get(4)?,
+                        status: row.get(5)?,
+                        mysql_service_id: row.get(6)?,
+                    })
+                })?;
+                for row in rows {
+                    databases.push(row?);
+                }
+            } else {
+                let mut stmt = conn.prepare(
+                    "SELECT name, user, password, engine, size, status, mysql_service_id
+                     FROM databases
+                     ORDER BY created_at DESC",
+                )?;
+                let rows = stmt.query_map([], |row| {
+                    Ok(DatabaseInfo {
+                        name: row.get(0)?,
+                        user: row.get(1)?,
+                        password: row.get(2)?,
+                        engine: row.get(3)?,
+                        size: row.get(4)?,
+                        status: row.get(5)?,
+                        mysql_service_id: row.get(6)?,
+                    })
+                })?;
+                for row in rows {
+                    databases.push(row?);
+                }
             }
             Ok(databases)
         })
     }
 
-    /// Get database password by name.
-    pub fn get_database_password(&self, name: &str) -> anyhow::Result<Option<String>> {
+    /// Get database password by name (optionally scoped to a MySQL service).
+    pub fn get_database_password(
+        &self,
+        name: &str,
+        mysql_service_id: Option<&str>,
+    ) -> anyhow::Result<Option<String>> {
         self.conn(|conn| {
-            let result: Option<String> = conn
-                .query_row(
-                    "SELECT password FROM databases WHERE name = ?",
+            let result: Option<String> = if let Some(service_id) = mysql_service_id {
+                conn.query_row(
+                    "SELECT password FROM databases WHERE name = ?1 AND mysql_service_id = ?2",
+                    rusqlite::params![name, service_id],
+                    |row| row.get(0),
+                )
+                .optional()?
+            } else {
+                conn.query_row(
+                    "SELECT password FROM databases WHERE name = ? LIMIT 1",
                     [name],
                     |row| row.get(0),
                 )
-                .optional()?;
+                .optional()?
+            };
             Ok(result)
         })
     }
 
     /// Update database user password.
-    pub fn update_database_password(&self, name: &str, new_pass: &str) -> anyhow::Result<()> {
+    pub fn update_database_password(
+        &self,
+        name: &str,
+        new_pass: &str,
+        mysql_service_id: Option<&str>,
+    ) -> anyhow::Result<()> {
         self.conn(|conn| {
             let now = chrono::Utc::now().to_rfc3339();
-            conn.execute(
-                "UPDATE databases SET password = ?1, updated_at = ?2 WHERE name = ?3",
-                rusqlite::params![new_pass, &now, name],
-            )?;
+            if let Some(service_id) = mysql_service_id {
+                conn.execute(
+                    "UPDATE databases SET password = ?1, updated_at = ?2
+                     WHERE name = ?3 AND mysql_service_id = ?4",
+                    rusqlite::params![new_pass, &now, name, service_id],
+                )?;
+            } else {
+                conn.execute(
+                    "UPDATE databases SET password = ?1, updated_at = ?2 WHERE name = ?3",
+                    rusqlite::params![new_pass, &now, name],
+                )?;
+            }
             Ok(())
         })
     }
@@ -615,23 +686,26 @@ impl Database {
     // ---- Service config by type ----
 
     /// Get service config by service_type (e.g. "mysql80", "mysql57").
-    /// Looks for a service whose service_type matches and returns its exe path
-    /// which we use as the mysql client executable.
+    /// Looks for a service whose service_type matches. Note: `exe` is the
+    /// server binary (mysqld.exe); callers that need the SQL client must resolve
+    /// `bin/mysql.exe` beside it.
     pub fn get_service_config_by_type(&self, service_type: &str) -> anyhow::Result<ServiceConfig> {
         self.conn(|conn| {
             let result = conn.query_row(
-                "SELECT exe, args, cwd, process_name, pid, port, installed FROM service_instances WHERE service_type = ? LIMIT 1",
+                "SELECT id, exe, args, cwd, config_file, process_name, pid, port, installed FROM service_instances WHERE service_type = ? LIMIT 1",
                 [service_type],
                 |row| {
                     Ok(ServiceConfig {
-                        exe: row.get(0)?,
-                        args: row.get::<_, Option<String>>(1)?,
-                        cwd: row.get::<_, Option<String>>(2)?,
+                        id: row.get(0)?,
+                        exe: row.get(1)?,
+                        args: row.get::<_, Option<String>>(2)?,
+                        cwd: row.get::<_, Option<String>>(3)?,
+                        config_file: row.get::<_, Option<String>>(4)?,
                         env: None,
-                        process_name: row.get(3)?,
-                        pid: row.get::<_, Option<i32>>(4)?.map(|p| p as u32),
-                        port: row.get::<_, i32>(5)? as u16,
-                        installed: row.get::<_, i32>(6)? != 0,
+                        process_name: row.get(5)?,
+                        pid: row.get::<_, Option<i32>>(6)?.map(|p| p as u32),
+                        port: row.get::<_, i32>(7)? as u16,
+                        installed: row.get::<_, i32>(8)? != 0,
                     })
                 },
             ).optional()?;
@@ -1098,8 +1172,9 @@ impl Database {
                     let pass = db["pass"].as_str().unwrap_or("");
 
                     conn.execute(
-                        "INSERT OR IGNORE INTO databases (name, user, password, engine, size, status, created_at, updated_at)
-                         VALUES (?1, ?2, ?3, 'mysql', '', 'active', ?4, ?5)",
+                        "INSERT OR IGNORE INTO databases
+                            (name, user, password, engine, size, status, mysql_service_id, created_at, updated_at)
+                         VALUES (?1, ?2, ?3, 'mysql80', '', 'active', 'mysql80', ?4, ?5)",
                         rusqlite::params![name, user, pass, &now, &now],
                     )?;
                 }
@@ -1212,9 +1287,11 @@ impl Database {
 
 /// Service configuration retrieved from the database.
 pub struct ServiceConfig {
+    pub id: String,
     pub exe: String,
     pub args: Option<String>,
     pub cwd: Option<String>,
+    pub config_file: Option<String>,
     pub env: Option<std::collections::HashMap<String, String>>,
     pub process_name: Option<String>,
     pub pid: Option<u32>,

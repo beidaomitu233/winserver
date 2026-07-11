@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, inject, onMounted, type Ref } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
+import { computed, inject, onMounted, type Ref } from 'vue'
 import { useServiceStore } from '../stores/useServiceStore'
 import { useSiteStore } from '../stores/useSiteStore'
 import { useDatabaseStore } from '../stores/useDatabaseStore'
@@ -14,18 +13,14 @@ function serviceLogo(service: { id: string; name: string }) {
   const id = service.id
   const name = service.name
   const logos: Record<string, string> = {
-    apache: `<svg viewBox="0 0 48 48" role="img" aria-label="Apache"><path d="M36.5 5.5C27 9.2 20.1 17.3 16.2 28.7c-1.5 4.4-3.1 8.4-5.7 13.8 4.9-3.7 8.6-7.6 11.3-12.1 5-8.4 8.9-15.1 14.7-24.9Z" fill="currentColor" opacity=".96"/><path d="M14.7 32.7c5.5-2.4 10.1-5.9 14.1-10.4M18.3 24.9l9.1 1.7M21.5 18.9l9 1" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" opacity=".92"/></svg>`,
-    nginx: `<svg viewBox="0 0 48 48" role="img" aria-label="Nginx"><path d="M24 3.8 41.2 13.7v20.1L24 44.2 6.8 34.3V13.7Z" fill="currentColor"/><path d="M15.3 33V15l17.4 18V15" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-    mysql: `<svg viewBox="0 0 48 48" role="img" aria-label="MySQL"><path d="M6.5 30.5c5.6-8.3 13-12.7 21.4-12.7 6.3 0 10.8 2.3 13.6 6.7-4.4-1.9-7.8-2.4-10.1-1.7 3.8 1.3 6.2 4.5 7 9.5-5.1-4-9.2-5.3-12.5-3.9-2.4 1-4.6 3.3-6.6 7-3.4-3.8-7.7-5.4-12.8-4.9Z" fill="currentColor" opacity=".95"/><path d="M28.4 16.8c1.4-3.8 3.8-6.3 7.1-7.5-.1 3.6-1 6.4-2.8 8.4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="33.6" cy="22.2" r="1.3" fill="#fff"/></svg>`,
-    mysql57: `<svg viewBox="0 0 48 48" role="img" aria-label="MySQL"><path d="M6.5 30.5c5.6-8.3 13-12.7 21.4-12.7 6.3 0 10.8 2.3 13.6 6.7-4.4-1.9-7.8-2.4-10.1-1.7 3.8 1.3 6.2 4.5 7 9.5-5.1-4-9.2-5.3-12.5-3.9-2.4 1-4.6 3.3-6.6 7-3.4-3.8-7.7-5.4-12.8-4.9Z" fill="currentColor" opacity=".95"/><path d="M28.4 16.8c1.4-3.8 3.8-6.3 7.1-7.5-.1 3.6-1 6.4-2.8 8.4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="33.6" cy="22.2" r="1.3" fill="#fff"/></svg>`,
-    mysql80: `<svg viewBox="0 0 48 48" role="img" aria-label="MySQL"><path d="M6.5 30.5c5.6-8.3 13-12.7 21.4-12.7 6.3 0 10.8 2.3 13.6 6.7-4.4-1.9-7.8-2.4-10.1-1.7 3.8 1.3 6.2 4.5 7 9.5-5.1-4-9.2-5.3-12.5-3.9-2.4 1-4.6 3.3-6.6 7-3.4-3.8-7.7-5.4-12.8-4.9Z" fill="currentColor" opacity=".95"/><path d="M28.4 16.8c1.4-3.8 3.8-6.3 7.1-7.5-.1 3.6-1 6.4-2.8 8.4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="33.6" cy="22.2" r="1.3" fill="#fff"/></svg>`,
-    php: `<svg viewBox="0 0 48 48" role="img" aria-label="PHP"><ellipse cx="24" cy="24" rx="21" ry="12.8" fill="currentColor" opacity=".96"/><text x="24" y="28.2" text-anchor="middle" class="brand-word" font-size="12.2" fill="#fff">PHP</text></svg>`,
-    php73: `<svg viewBox="0 0 48 48" role="img" aria-label="PHP"><ellipse cx="24" cy="24" rx="21" ry="12.8" fill="currentColor" opacity=".96"/><text x="24" y="28.2" text-anchor="middle" class="brand-word" font-size="12.2" fill="#fff">PHP</text></svg>`,
-    redis: `<svg viewBox="0 0 48 48" role="img" aria-label="Redis"><path d="m24 7 18 8-18 8L6 15Z" fill="currentColor"/><path d="m6 22 18 8 18-8v7l-18 8-18-8Z" fill="currentColor" opacity=".86"/><path d="m6 32 18 8 18-8v6l-18 7-18-7Z" fill="currentColor" opacity=".68"/><path d="m17 14 7-3 7 3-7 3Z" fill="#fff" opacity=".9"/></svg>`,
-    minio: `<svg viewBox="0 0 48 48" role="img" aria-label="MinIO"><rect x="8" y="8" width="32" height="32" rx="6" fill="currentColor" opacity=".18"/><path d="M16 16h16v16H16z" fill="currentColor" opacity=".8"/><path d="M20 20h8M20 24h8M20 28h4" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>`,
-    pgsql: `<svg viewBox="0 0 48 48" role="img" aria-label="PostgreSQL"><path d="M24 6c-7 0-12 5-12 12 0 4 2 8 5 10l-1 6h16l-1-6c3-2 5-6 5-10 0-7-5-12-12-12Z" fill="currentColor" opacity=".9"/><path d="M18 22h12M20 26h8" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>`
+    nginx: `<svg viewBox="0 0 48 48"><path d="M24 3.8 41.2 13.7v20.1L24 44.2 6.8 34.3V13.7Z" fill="currentColor"/><path d="M15.3 33V15l17.4 18V15" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    mysql57: `<svg viewBox="0 0 48 48"><path d="M6.5 30.5c5.6-8.3 13-12.7 21.4-12.7 6.3 0 10.8 2.3 13.6 6.7-4.4-1.9-7.8-2.4-10.1-1.7 3.8 1.3 6.2 4.5 7 9.5-5.1-4-9.2-5.3-12.5-3.9-2.4 1-4.6 3.3-6.6 7-3.4-3.8-7.7-5.4-12.8-4.9Z" fill="currentColor" opacity=".95"/></svg>`,
+    mysql80: `<svg viewBox="0 0 48 48"><path d="M6.5 30.5c5.6-8.3 13-12.7 21.4-12.7 6.3 0 10.8 2.3 13.6 6.7-4.4-1.9-7.8-2.4-10.1-1.7 3.8 1.3 6.2 4.5 7 9.5-5.1-4-9.2-5.3-12.5-3.9-2.4 1-4.6 3.3-6.6 7-3.4-3.8-7.7-5.4-12.8-4.9Z" fill="currentColor" opacity=".95"/></svg>`,
+    php73: `<svg viewBox="0 0 48 48"><ellipse cx="24" cy="24" rx="21" ry="12.8" fill="currentColor"/><text x="24" y="28.2" text-anchor="middle" class="brand-word" font-size="12.2" fill="#fff">PHP</text></svg>`,
+    redis: `<svg viewBox="0 0 48 48"><path d="m24 7 18 8-18 8L6 15Z" fill="currentColor"/><path d="m6 22 18 8 18-8v7l-18 8-18-8Z" fill="currentColor" opacity=".86"/></svg>`,
+    minio: `<svg viewBox="0 0 48 48"><rect x="8" y="8" width="32" height="32" rx="6" fill="currentColor" opacity=".18"/><path d="M16 16h16v16H16z" fill="currentColor" opacity=".8"/></svg>`,
   }
-  return `<span class="service-brand service-brand-${id}" title="${name}">${logos[id] || `<svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="18" fill="currentColor" opacity=".14"/><text x="24" y="28" text-anchor="middle" class="brand-word" font-size="13" fill="currentColor">${String(name).slice(0, 2).toUpperCase()}</text></svg>`}</span>`
+  return `<span class="service-brand" title="${name}">${logos[id] || `<svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="18" fill="currentColor" opacity=".14"/><text x="24" y="28" text-anchor="middle" font-size="13" fill="currentColor">${String(name).slice(0, 2)}</text></svg>`}</span>`
 }
 
 const serviceStore = useServiceStore()
@@ -34,44 +29,114 @@ const databaseStore = useDatabaseStore()
 const settingsStore = useSettingsStore()
 const currentPage = inject<Ref<string>>('currentPage')!
 const resources = inject<Ref<SystemResource>>('systemResource')!
-const openConfigEditor = inject<(fileId: string, label: string, filePath: string) => void>('openConfigEditor')!
+const openServiceConfigModal = inject<(svc: { id: string; name: string; config_file: string | null }) => void>('openServiceConfigModal')!
 
-const collapsed = ref(localStorage.getItem('ws-svc-collapsed') === '1')
-const logs = ref<Array<{ time: string; type: string; text: string }>>([])
+const primaryOrder = ['nginx', 'mysql80', 'mysql57', 'php73', 'redis', 'minio']
 
 const dashboardServices = computed(() => {
-  const primaryTypes = new Set(['nginx', 'php', 'mysql', 'mysql57', 'mysql80', 'redis'])
-  return serviceStore.services.filter(service =>
-    primaryTypes.has(service.id) || primaryTypes.has(service.service_type)
+  const primaryTypes = new Set(primaryOrder)
+  const list = serviceStore.services.filter(
+    s => primaryTypes.has(s.id) || primaryTypes.has(s.service_type),
   )
+  return [...list].sort((a, b) => {
+    const ai = primaryOrder.indexOf(a.id)
+    const bi = primaryOrder.indexOf(b.id)
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
+  })
 })
-const runningCount = computed(() => dashboardServices.value.filter(service => service.state === 'running').length)
-const totalCount = computed(() => dashboardServices.value.length)
+
+const runningCount = computed(() => dashboardServices.value.filter(s => s.state === 'running').length)
 const siteCount = computed(() => siteStore.sites.length)
 const dbCount = computed(() => databaseStore.databases.length)
+const installedApps = computed(() => dashboardServices.value.filter(s => s.installed))
+
+const activeMysql = computed(() => {
+  const mysqls = dashboardServices.value.filter(s => s.id.startsWith('mysql') && s.installed)
+  return mysqls.find(s => s.state === 'running') || mysqls[0] || null
+})
 
 function formatUptime(seconds: number) {
   const total = Math.max(0, Number(seconds || 0))
   const days = Math.floor(total / 86400)
   const hours = Math.floor((total % 86400) / 3600)
   const minutes = Math.floor((total % 3600) / 60)
-  if (days > 0) return `${days}天 ${hours}小时`
-  if (hours > 0) return `${hours}小时 ${minutes}分`
-  return `${minutes}分`
+  if (days > 0) return `${days} 天 ${hours} 小时`
+  if (hours > 0) return `${hours} 小时 ${minutes} 分`
+  return `${minutes} 分`
 }
 
 const uptimeText = computed(() => formatUptime(resources.value.uptime_seconds))
 
-function toggleCollapse() {
-  collapsed.value = !collapsed.value
-  localStorage.setItem('ws-svc-collapsed', collapsed.value ? '1' : '0')
+function clampPct(n: number) {
+  return Math.max(0, Math.min(100, Math.round(Number(n) || 0)))
+}
+
+function fmt2(n: number) {
+  const v = Number(n)
+  if (!Number.isFinite(v)) return '0.00'
+  return v.toFixed(2)
+}
+
+/** Approximate load = cores * cpu% (Windows has no loadavg). */
+const loadValue = computed(() => {
+  const cores = Math.max(1, Number(resources.value.cpu_count) || 1)
+  return (cores * (Number(resources.value.cpu_percent) || 0)) / 100
+})
+
+const loadPercent = computed(() => {
+  const cores = Math.max(1, Number(resources.value.cpu_count) || 1)
+  return clampPct((loadValue.value / cores) * 100)
+})
+
+const rings = computed(() => [
+  {
+    key: 'cpu',
+    label: 'CPU',
+    pct: clampPct(resources.value.cpu_percent),
+    value: `${clampPct(resources.value.cpu_percent)}%`,
+    unit: `${resources.value.cpu_count || '—'} 核`,
+    color: 'var(--primary)',
+  },
+  {
+    key: 'mem',
+    label: '内存',
+    pct: clampPct(resources.value.memory_percent),
+    value: `${clampPct(resources.value.memory_percent)}%`,
+    unit: `${fmt2((resources.value.used_memory_mb || 0) / 1024)} / ${fmt2((resources.value.total_memory_mb || 0) / 1024)} GB`,
+    color: 'var(--purple, #7c5cfc)',
+  },
+  {
+    key: 'load',
+    label: '负载',
+    pct: loadPercent.value,
+    value: fmt2(loadValue.value),
+    unit: `约 ${resources.value.cpu_count || 1} 核容量`,
+    color: 'var(--warning, #f5a524)',
+  },
+  {
+    key: 'disk',
+    label: '存储',
+    pct: clampPct(resources.value.disk?.percent),
+    value: `${clampPct(resources.value.disk?.percent)}%`,
+    unit: `${fmt2(resources.value.disk?.used_gb || 0)} / ${fmt2(resources.value.disk?.total_gb || 0)} GB`,
+    color: 'var(--success)',
+  },
+])
+
+// Ring geometry is in viewBox units (0–100). SVG CSS size scales independently.
+const RING_R = 38
+const RING_C = 2 * Math.PI * RING_R
+
+function ringOffset(pct: number) {
+  const p = clampPct(pct) / 100
+  return RING_C * (1 - p)
 }
 
 async function startAll() {
   try {
     await serviceStore.startAll()
-  } catch (e: any) {
-    console.error('Start all failed:', e)
+  } catch (e) {
+    console.error(e)
   }
 }
 
@@ -79,298 +144,518 @@ async function toggleService(id: string) {
   const svc = serviceStore.services.find(s => s.id === id)
   if (!svc) return
   try {
-    if (svc.state === 'running') {
-      await serviceStore.stopService(id)
-    } else {
-      await serviceStore.startService(id)
-    }
-  } catch (e: any) {
-    console.error('Toggle service failed:', e)
-  }
-}
-
-async function restartService(id: string) {
-  try {
-    await serviceStore.restartService(id)
-  } catch (e: any) {
-    console.error('Restart service failed:', e)
+    if (svc.state === 'running') await serviceStore.stopService(id)
+    else await serviceStore.startService(id)
+  } catch (e) {
+    console.error(e)
   }
 }
 
 function openServiceConfig(svc: { id: string; name: string; config_file: string | null }) {
-  // Redis/MinIO get a dedicated dual-mode config modal; others fall back to
-  // the generic config-file text editor.
-  const openServiceConfigModal = inject<(svc: { id: string; name: string; config_file: string | null }) => void>('openServiceConfigModal')
-  if (svc.id === 'redis' || svc.id === 'minio') {
-    openServiceConfigModal?.(svc)
-    return
-  }
-  const configFile = serviceStore.configFiles.find(f => f.id === svc.id || f.id === `service:${svc.id}`)
-  if (configFile) {
-    openConfigEditor(configFile.id, configFile.label, configFile.path)
-  } else if (svc.config_file) {
-    openConfigEditor(`service:${svc.id}`, svc.name + ' 配置', svc.config_file)
-  }
+  // All core services use the visual config modal (file editor is optional inside).
+  openServiceConfigModal?.(svc)
 }
 
-/// Status text tailored to the home card, including the "未安装" (not installed)
-/// state that the base statusText() does not cover.
-function homeStatusText(svc: { installed: boolean; state: string }): string {
+function homeStatusText(svc: { installed: boolean; state: string }) {
   if (!svc.installed) return '未安装'
   return statusText(svc.state as any)
 }
 
-/// Resolve the action buttons for a service per PRD §1.1 status→button mapping.
-function serviceActionMode(svc: { installed: boolean; state: string }): {
-  primaryLabel: string
-  primaryAction: 'install' | 'toggle' | 'viewProblem' | 'none'
-  primaryDisabled: boolean
-  showRestart: boolean
-  showConfig: boolean
-  showLog: boolean
-} {
-  if (!svc.installed) {
-    return { primaryLabel: '安装/导入', primaryAction: 'install', primaryDisabled: false, showRestart: false, showConfig: false, showLog: false }
-  }
-  switch (svc.state) {
-    case 'starting':
-      return { primaryLabel: '启动中', primaryAction: 'none', primaryDisabled: true, showRestart: false, showConfig: false, showLog: true }
-    case 'stopping':
-      return { primaryLabel: '停止中', primaryAction: 'none', primaryDisabled: true, showRestart: false, showConfig: false, showLog: true }
-    case 'running':
-      return { primaryLabel: '停止', primaryAction: 'toggle', primaryDisabled: false, showRestart: true, showConfig: true, showLog: false }
-    case 'failed':
-    case 'degraded':
-      return { primaryLabel: '查看问题', primaryAction: 'viewProblem', primaryDisabled: false, showRestart: true, showConfig: false, showLog: true }
-    default: // stopped, installed, unknown
-      return { primaryLabel: '启动', primaryAction: 'toggle', primaryDisabled: false, showRestart: false, showConfig: true, showLog: false }
-  }
-}
-
-async function installBundled(serviceId: string) {
-  try {
-    await invoke('software_install_bundled', { softwareId: serviceId })
-    await serviceStore.fetchState()
-  } catch (e: any) {
-    console.error('Install bundled failed:', e)
-  }
-}
-
-function openSoftwarePage() {
-  currentPage.value = 'software'
-}
-
-async function fetchLogs() {
-  try {
-    const data = await invoke<{ logs: string[] }>('get_logs', { source: 'operation', search: '' })
-    logs.value = (data.logs || []).slice(0, 6).map(line => {
-      const match = line.match(/^\[([^\]]+)\]\s+(\w+)\s+(.*)$/)
-      return {
-        time: match?.[1]?.slice(11, 19) || '',
-        type: line.includes('FAIL') ? 'error' : 'success',
-        text: match?.[3] || line,
-      }
-    })
-  } catch {
-    // silent
-  }
-}
-
 onMounted(async () => {
-  await Promise.all([serviceStore.fetchState(), siteStore.fetchState(), databaseStore.fetchState(), settingsStore.fetchSettings()])
-  await fetchLogs()
+  await Promise.all([
+    serviceStore.fetchState(),
+    siteStore.fetchState(),
+    databaseStore.fetchState(),
+    settingsStore.fetchSettings(),
+  ])
 })
 </script>
 
 <template>
-  <div class="page-enter dashboard-page dashboard-v2">
-    <!-- Hero -->
-    <section class="home-hero home-hero-v2">
-      <div class="home-hero-top">
-        <div class="home-heading">
-          <div class="home-heading-mark" v-html="icon('server')" />
-          <div>
-            <div class="home-title">本地开发环境</div>
-          </div>
+  <div class="page-enter panel-home">
+    <!-- 概览 -->
+    <section class="panel-overview">
+      <div class="panel-overview-head">
+        <div>
+          <div class="panel-eyebrow">概览</div>
+          <h1 class="panel-title">WinServer 控制台</h1>
         </div>
-        <div class="home-hero-actions">
-          <span class="home-state-pill">
-            <span class="status-dot running" />
-            {{ runningCount }} 项服务在线
-          </span>
+        <div class="panel-overview-actions">
           <button class="btn primary" :disabled="serviceStore.suiteLoading" @click="startAll">
             <svg class="icon icon-sm"><use href="#i-play" /></svg>
             {{ serviceStore.suiteLoading ? '启动中' : '一键启动' }}
           </button>
         </div>
       </div>
-
-      <!-- KPIs -->
-      <div class="home-kpis home-kpis-v2">
-        <div class="home-kpi">
-          <div class="home-kpi-value">{{ runningCount }}<small>/ {{ totalCount }}</small></div>
-          <div class="home-kpi-label">服务</div>
+      <div class="panel-kpi-grid">
+        <button class="panel-kpi" type="button" @click="currentPage = 'software'">
+          <div class="panel-kpi-label">服务</div>
+          <div class="panel-kpi-value">{{ runningCount }}<small>/{{ dashboardServices.length }}</small></div>
+        </button>
+        <button class="panel-kpi" type="button" @click="currentPage = 'sites'">
+          <div class="panel-kpi-label">站点</div>
+          <div class="panel-kpi-value">{{ siteCount }}</div>
+        </button>
+        <button class="panel-kpi" type="button" @click="currentPage = 'database'">
+          <div class="panel-kpi-label">数据库</div>
+          <div class="panel-kpi-value">{{ dbCount }}</div>
+          <div class="panel-kpi-hint">{{ activeMysql?.name || '未安装 MySQL' }}</div>
+        </button>
+        <div class="panel-kpi">
+          <div class="panel-kpi-label">运行时间</div>
+          <div class="panel-kpi-value panel-kpi-value-sm">{{ uptimeText }}</div>
         </div>
-        <div class="home-kpi">
-          <div class="home-kpi-value">{{ siteCount }}<small>个</small></div>
-          <div class="home-kpi-label">站点</div>
-        </div>
-        <div class="home-kpi">
-          <div class="home-kpi-value">{{ dbCount }}<small>个</small></div>
-          <div class="home-kpi-label">数据库</div>
-        </div>
-        <div class="home-kpi">
-          <div class="home-kpi-value">{{ uptimeText }}</div>
-          <div class="home-kpi-label">运行时间</div>
-        </div>
-      </div>
-
-      <!-- Quick actions -->
-      <div class="home-quickbar home-quickbar-v2">
-        <button class="home-quick" @click="$emit('open-create-site')">
-          <svg class="icon icon-sm"><use href="#i-plus" /></svg>新建站点
-        </button>
-        <button class="home-quick" @click="currentPage = 'sites'">
-          <svg class="icon icon-sm"><use href="#i-globe" /></svg>网站
-        </button>
-        <button class="home-quick" @click="currentPage = 'database'">
-          <svg class="icon icon-sm"><use href="#i-database" /></svg>数据库
-        </button>
-        <button class="home-quick" @click="currentPage = 'software'">
-          <svg class="icon icon-sm"><use href="#i-grid" /></svg>环境
-        </button>
-        <button class="home-quick" @click="currentPage = 'files'">
-          <svg class="icon icon-sm"><use href="#i-folder" /></svg>文件
-        </button>
-        <button class="home-quick" @click="$emit('show-ports')">
-          <svg class="icon icon-sm"><use href="#i-network" /></svg>端口
-        </button>
       </div>
     </section>
 
-    <!-- Workspace -->
-    <section class="home-workspace">
-      <!-- Left: services + logs -->
-      <div class="home-workspace-main">
-        <!-- Service section header -->
-        <div class="home-section-head">
-          <div
-            class="home-section-title-wrap"
-            @click="toggleCollapse"
-            title="展开/折叠服务列表"
-          >
-            <div class="home-section-title" v-html="icon('sliders', 'icon-sm') + '服务状态'" />
-            <svg class="icon icon-sm collapse-arrow" :class="{ rotated: !collapsed }">
-              <use href="#i-chevron-down" />
-            </svg>
-          </div>
-          <div class="home-section-actions">
-            <span>{{ runningCount }}/{{ totalCount }} 正常</span>
-            <button class="text-link" @click="currentPage = 'software'">
-              管理 <svg class="icon icon-sm"><use href="#i-chevron-right" /></svg>
-            </button>
-          </div>
+    <section class="panel-mid">
+      <!-- 监控：四个环形图 -->
+      <div class="panel-card panel-monitor">
+        <div class="panel-card-head">
+          <div class="panel-card-title" v-html="icon('monitor', 'icon-sm') + '监控'" />
         </div>
-
-        <!-- Service grid -->
-        <div class="home-service-grid home-service-grid-scroll" :class="{ collapsed }">
-          <div
-            v-for="svc in dashboardServices"
-            :key="svc.id"
-            class="home-service-row"
-            :class="{ 'not-installed': !svc.installed }"
-            :data-service="svc.id"
-          >
-            <div class="home-service-identity">
-              <div
-                class="home-service-logo"
-                :style="{ '--logo': getServiceMeta(svc.id).color }"
-                v-html="serviceLogo({ id: svc.id, name: svc.name })"
-              />
-              <div class="home-service-copy">
-                <div class="home-service-name">
-                  {{ svc.name }}
-                  <span class="home-service-port">:{{ svc.port || '—' }}</span>
-                </div>
+        <div class="panel-rings">
+          <div v-for="ring in rings" :key="ring.key" class="panel-ring">
+            <div class="panel-ring-chart">
+              <svg viewBox="0 0 100 100">
+                <circle class="ring-bg" cx="50" cy="50" :r="RING_R" />
+                <circle
+                  class="ring-fg"
+                  cx="50"
+                  cy="50"
+                  :r="RING_R"
+                  :stroke="ring.color"
+                  :stroke-dasharray="RING_C"
+                  :stroke-dashoffset="ringOffset(ring.pct)"
+                />
+              </svg>
+              <div class="panel-ring-center">
+                <strong>{{ ring.value }}</strong>
               </div>
             </div>
-            <div
-              class="home-service-state"
-              :class="svc.installed ? stateToStatus(svc.state) : 'stopped'"
-            >
-              <span class="status-dot" :class="svc.installed ? stateToStatus(svc.state) : 'stopped'" />
-              {{ homeStatusText(svc) }}
-            </div>
-            <div class="home-service-actions">
-              <button
-                v-if="serviceActionMode(svc).primaryAction === 'install'"
-                class="home-service-action primary"
-                @click="installBundled(svc.id)"
-              >
-                {{ serviceActionMode(svc).primaryLabel }}
-              </button>
-              <button
-                v-else
-                class="home-service-action"
-                :class="svc.state === 'running' ? 'danger' : 'primary'"
-                :disabled="serviceActionMode(svc).primaryDisabled || serviceStore.isServiceBusy(svc.id)"
-                @click="serviceActionMode(svc).primaryAction === 'viewProblem' ? $emit('show-logs') : toggleService(svc.id)"
-              >
-                {{ serviceStore.isServiceBusy(svc.id) ? '处理中' : serviceActionMode(svc).primaryLabel }}
-              </button>
-              <button
-                v-if="serviceActionMode(svc).showRestart"
-                class="home-service-action"
-                :disabled="serviceStore.isServiceBusy(svc.id)"
-                @click="restartService(svc.id)"
-              >
-                重启
-              </button>
-              <button
-                v-if="serviceActionMode(svc).showConfig"
-                class="home-service-action"
-                @click="openServiceConfig(svc)"
-              >
-                配置
-              </button>
-              <button
-                v-if="serviceActionMode(svc).showLog"
-                class="home-service-action"
-                @click="$emit('show-logs')"
-              >
-                日志
-              </button>
-              <button
-                v-if="!svc.installed"
-                class="home-service-action"
-                @click="openSoftwarePage"
-              >
-                软件页
-              </button>
-            </div>
+            <div class="panel-ring-label">{{ ring.label }}</div>
+            <div class="panel-ring-unit">{{ ring.unit }}</div>
           </div>
         </div>
       </div>
 
-      <!-- Right: log panel (moved from under the service list) -->
-      <aside class="home-log-side">
-        <div class="home-log-head">
-          <div class="home-section-title" v-html="icon('file', 'icon-sm') + '日志'" />
-          <button class="text-link" @click="$emit('show-logs')">
-            全部 <svg class="icon icon-sm"><use href="#i-chevron-right" /></svg>
-          </button>
+      <!-- 系统信息 -->
+      <div class="panel-card panel-sysinfo">
+        <div class="panel-card-head">
+          <div class="panel-card-title" v-html="icon('server', 'icon-sm') + '系统信息'" />
         </div>
-        <div class="home-log-list">
-          <template v-if="logs.length > 0">
-            <div v-for="(log, i) in logs" :key="i" class="home-log-row">
-              <span class="log-dot" :class="log.type" />
-              <span class="home-log-time">{{ log.time }}</span>
-              <span class="home-log-text">{{ log.text }}</span>
-            </div>
-          </template>
-          <div v-else style="color: var(--text-3)">暂无日志</div>
+        <div class="panel-sys-list">
+          <div class="panel-sys-row"><span>面板</span><strong>WinServer 0.2</strong></div>
+          <div class="panel-sys-row"><span>开机时长</span><strong>{{ uptimeText }}</strong></div>
+          <div class="panel-sys-row"><span>CPU</span><strong class="truncate">{{ resources.cpu_model || '—' }}</strong></div>
+          <div class="panel-sys-row">
+            <span>内存</span>
+            <strong>{{ fmt2((resources.total_memory_mb || 0) / 1024) }} GB</strong>
+          </div>
+          <div class="panel-sys-row">
+            <span>存储</span>
+            <strong>{{ fmt2(resources.disk?.used_gb || 0) }} / {{ fmt2(resources.disk?.total_gb || 0) }} GB</strong>
+          </div>
+          <div class="panel-sys-row">
+            <span>活动 MySQL</span>
+            <strong>{{ activeMysql ? activeMysql.name : '未安装' }}</strong>
+          </div>
         </div>
-      </aside>
+      </div>
+    </section>
+
+    <!-- 应用 -->
+    <section class="panel-card panel-apps">
+      <div class="panel-card-head">
+        <div class="panel-card-title" v-html="icon('box', 'icon-sm') + '应用'" />
+        <button class="text-link" type="button" @click="currentPage = 'software'">全部软件</button>
+      </div>
+      <div class="panel-app-grid">
+        <div
+          v-for="svc in installedApps"
+          :key="'app-' + svc.id"
+          class="panel-app-card"
+          :class="{ running: svc.state === 'running' }"
+        >
+          <div
+            class="panel-app-logo"
+            :style="{ '--logo': getServiceMeta(svc.id).color }"
+            v-html="serviceLogo({ id: svc.id, name: svc.name })"
+          />
+          <div class="panel-app-name">{{ svc.name }}</div>
+          <div class="panel-app-state">
+            <span class="status-dot" :class="stateToStatus(svc.state)" />
+            {{ homeStatusText(svc) }}
+            <template v-if="svc.port"> · {{ svc.port }}</template>
+          </div>
+          <div class="panel-app-actions">
+            <button
+              class="btn small"
+              :class="svc.state === 'running' ? '' : 'primary'"
+              :disabled="serviceStore.isServiceBusy(svc.id)"
+              @click="toggleService(svc.id)"
+            >
+              {{ serviceStore.isServiceBusy(svc.id) ? '…' : svc.state === 'running' ? '停止' : '启动' }}
+            </button>
+            <button class="btn small ghost" @click="openServiceConfig(svc)">配置</button>
+          </div>
+        </div>
+
+        <button
+          v-if="installedApps.length === 0"
+          class="panel-app-empty"
+          type="button"
+          @click="currentPage = 'software'"
+        >
+          <svg class="icon"><use href="#i-plus" /></svg>
+          <span>安装运行环境</span>
+        </button>
+      </div>
     </section>
   </div>
 </template>
+
+<style scoped>
+/*
+  Layout rules:
+  - Fill the content area top-to-bottom (贴合上下).
+  - Overview keeps content height; mid + apps share remaining height evenly.
+  - Gap stays fixed; flex-grow distributes free space between sections.
+  - Overflow scrolls inside cards, not by squashing mid band.
+*/
+.panel-home {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+.panel-overview {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface-solid);
+  padding: 14px 16px;
+  box-shadow: none;
+}
+.panel-overview-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  align-items: center;
+}
+.panel-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 2px;
+}
+.panel-title { margin: 0; font-size: 17px; font-weight: 780; }
+.panel-overview-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.panel-kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
+.panel-kpi {
+  text-align: left; border: 0; border-radius: 10px;
+  background: var(--surface-soft); padding: 10px 14px; font: inherit; color: inherit; cursor: pointer;
+  transition: background .14s ease;
+}
+button.panel-kpi:hover { background: var(--surface-hover); }
+div.panel-kpi { cursor: default; }
+.panel-kpi-label { font-size: 12px; color: var(--text-3); font-weight: 650; }
+.panel-kpi-value { margin-top: 4px; font-size: 24px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.panel-kpi-value small { font-size: 13px; color: var(--text-3); font-weight: 650; }
+.panel-kpi-value-sm { font-size: 16px; padding-top: 4px; }
+.panel-kpi-hint { margin-top: 3px; font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Mid band + apps share leftover height; mid capped so apps keep 2-row room */
+.panel-mid {
+  flex: 1 1 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(280px, 1fr);
+  gap: 12px;
+  align-items: stretch;
+  min-height: 180px;
+  max-height: min(280px, 34vh);
+  height: auto;
+}
+
+.panel-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface-solid);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  height: 100%;
+  box-shadow: none;
+}
+
+.panel-monitor,
+.panel-sysinfo {
+  min-height: 0;
+  height: 100%;
+}
+
+.panel-card-head {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+}
+.panel-card-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 740; }
+.panel-card-title :deep(.icon) { color: var(--primary); }
+.text-link { border: 0; background: transparent; color: var(--primary); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+
+/* Rings scale with monitor card size */
+.panel-rings {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: clamp(10px, 1.6vh, 18px) clamp(10px, 1.2vw, 16px);
+  align-content: center;
+  justify-items: center;
+}
+.panel-ring {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+.panel-ring-chart {
+  position: relative;
+  /* Grow on maximize: track both viewport and available row height */
+  width: clamp(76px, min(11vw, 18vh), 132px);
+  height: clamp(76px, min(11vw, 18vh), 132px);
+  flex: 0 0 auto;
+}
+.panel-ring-chart svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  overflow: visible;
+}
+.ring-bg {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 7.5;
+}
+.ring-fg {
+  fill: none;
+  stroke-width: 7.5;
+  stroke-linecap: round;
+  transition: stroke-dashoffset .45s ease;
+}
+.panel-ring-center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.panel-ring-center strong {
+  font-size: clamp(12px, 1.3vw, 16px);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.panel-ring-label { font-size: clamp(11px, 1vw, 13px); font-weight: 740; }
+.panel-ring-unit {
+  font-size: clamp(9px, 0.85vw, 11px);
+  color: var(--text-3);
+  text-align: center;
+  line-height: 1.3;
+  max-width: 100%;
+  padding: 0 4px;
+  word-break: break-word;
+}
+
+.panel-sys-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 6px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+}
+.panel-sys-row {
+  display: flex; justify-content: space-between; gap: 12px;
+  min-height: 30px; align-items: center; font-size: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.panel-sys-row:last-child { border-bottom: 0; }
+.panel-sys-row span { color: var(--text-3); flex: none; }
+.panel-sys-row strong { font-weight: 650; text-align: right; min-width: 0; }
+.panel-sys-row .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 62%; }
+
+/* Apps: fixed equal card tiles, no height drift / partial clip */
+.panel-apps {
+  flex: 1.35 1 0;
+  min-height: 0;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+}
+.panel-app-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* Every row same height → cards align, second row not half-cut */
+  grid-auto-rows: 156px;
+  gap: 12px;
+  padding: 12px 14px 14px;
+  align-content: start;
+  align-items: stretch;
+  overflow: auto;
+}
+.panel-app-card {
+  border: 0;
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--surface-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.panel-app-card.running {
+  background: color-mix(in srgb, var(--success-soft) 70%, var(--surface-soft));
+}
+.panel-app-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--logo, var(--primary));
+  background: color-mix(in srgb, var(--logo, var(--primary)) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--logo, var(--primary)) 18%, transparent);
+  flex: 0 0 36px;
+}
+.panel-app-logo :deep(svg),
+.panel-app-logo :deep(.service-brand),
+.panel-app-logo :deep(.service-brand svg) {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+.panel-app-logo :deep(.service-brand) {
+  width: 24px;
+  height: 24px;
+  line-height: 0;
+}
+.panel-app-name {
+  font-weight: 740;
+  font-size: 13px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 0 auto;
+}
+.panel-app-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.2;
+  min-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 0 auto;
+}
+.panel-app-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+  width: 100%;
+  padding-top: 2px;
+  flex: 0 0 auto;
+}
+.panel-app-actions .btn.small {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.btn.ghost { background: transparent; color: var(--text-3); }
+.panel-app-empty {
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  cursor: pointer;
+  min-height: 156px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 1180px) {
+  /* Narrow: allow natural flow + page scroll instead of forced fill */
+  .panel-home {
+    height: auto;
+    max-height: none;
+    min-height: 100%;
+    overflow: visible;
+  }
+  .panel-mid {
+    flex: 0 0 auto;
+    grid-template-columns: 1fr;
+    min-height: 200px;
+    max-height: none;
+    height: auto;
+  }
+  .panel-monitor { min-height: 200px; height: auto; }
+  .panel-sysinfo { height: auto; }
+  .panel-apps {
+    flex: 0 0 auto;
+    min-height: auto;
+  }
+  .panel-app-grid {
+    overflow: visible;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: 156px;
+  }
+  .panel-kpi-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+
+@media (max-width: 720px) {
+  .panel-rings { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .panel-app-grid {
+    grid-template-columns: 1fr;
+    grid-auto-rows: 156px;
+  }
+  .panel-mid { height: auto; max-height: none; }
+}
+</style>

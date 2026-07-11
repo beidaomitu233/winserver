@@ -9,8 +9,8 @@ const emit = defineEmits<{ close: [] }>()
 const port = ref<number | string>('')
 const result = ref<PortCheckResult | null>(null)
 const checking = ref(false)
-const errorMessage = ref('')
 const killing = ref(false)
+const errorMessage = ref('')
 
 async function checkPort() {
   const portNum = Number(port.value)
@@ -50,10 +50,10 @@ function ownerText(value: PortCheckResult) {
 </script>
 
 <template>
-  <div v-if="props.visible" class="modal-overlay" @click.self="emit('close')">
+  <div v-if="props.visible" class="overlay show" @click.self="emit('close')">
     <div class="modal" style="max-width: 420px;">
-      <div class="modal-header">
-        <h3>端口检测</h3>
+      <div class="modal-head">
+        <div class="modal-title">端口检测</div>
         <button class="btn-icon" @click="emit('close')">
           <svg class="icon"><use href="#i-close" /></svg>
         </button>

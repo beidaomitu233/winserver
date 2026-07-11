@@ -29,9 +29,11 @@ export interface SiteInfo {
 export interface DatabaseInfo {
   name: string
   user: string
+  password?: string
   engine: string
   size: string
   status: string
+  mysql_service_id?: string
 }
 
 export interface SoftwareInfo {

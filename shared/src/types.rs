@@ -121,9 +121,15 @@ pub struct AppState {
 pub struct DatabaseInfo {
     pub name: String,
     pub user: String,
+    /// Database account password (UI should mask by default).
+    #[serde(default)]
+    pub password: String,
     pub engine: String,
     pub size: String,
     pub status: String,
+    /// Owning MySQL service id (`mysql57` / `mysql80`). Used to scope lists per version.
+    #[serde(default)]
+    pub mysql_service_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -42,6 +42,91 @@ fn shell_words(s: &str) -> Vec<String> {
     words
 }
 
+/// Prefer `…/data/…` when a recorded path still points at `…/deps/data/…`.
+fn heal_install_path(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    if let Some(idx) = normalized.find("/deps/data") {
+        let healed = format!("{}{}", &normalized[..idx], &normalized[idx + "/deps".len()..]);
+        let native = if path.contains('\\') {
+            healed.replace('/', "\\")
+        } else {
+            healed.clone()
+        };
+        if Path::new(&native).exists() || Path::new(&healed).exists() {
+            return native;
+        }
+    }
+    path.to_string()
+}
+
+fn service_config_path(config_file: &Option<String>, cwd: &str, fallback_name: &str) -> Option<PathBuf> {
+    config_file
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(|path| PathBuf::from(heal_install_path(path)))
+        .or_else(|| {
+            let fallback = PathBuf::from(cwd).join(fallback_name);
+            if fallback.exists() {
+                Some(fallback)
+            } else {
+                None
+            }
+        })
+}
+
+fn parse_port(value: &str) -> Option<u16> {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port > 0)
+}
+
+fn parse_redis_port(path: &Path) -> Option<u16> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    raw.lines().find_map(|line| {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            return None;
+        }
+        let mut parts = line.split_whitespace();
+        let key = parts.next()?;
+        if key.eq_ignore_ascii_case("port") {
+            parts.next().and_then(parse_port)
+        } else {
+            None
+        }
+    })
+}
+
+fn parse_env_file(path: &Path) -> HashMap<String, String> {
+    let mut values = HashMap::new();
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return values;
+    };
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            continue;
+        }
+        let value = value.trim().trim_matches('"').trim_matches('\'').to_string();
+        values.insert(key.to_string(), value);
+    }
+
+    values
+}
+
 /// A tracked child process entry.
 #[derive(Debug, Clone)]
 pub struct ProcessEntry {
@@ -54,6 +139,7 @@ pub struct ProcessEntry {
 pub struct ProcessManager {
     processes: Arc<Mutex<HashMap<String, ProcessEntry>>>,
     db: Arc<Database>,
+    #[allow(dead_code)]
     port_manager: Arc<super::PortManager>,
     health_monitor_running: Arc<std::sync::atomic::AtomicBool>,
     shutdown_signal: Arc<tokio::sync::Notify>,
@@ -131,7 +217,7 @@ impl ProcessManager {
     }
 
     /// Reconcile process tracking on startup by verifying PIDs in the database
-    /// are still running. Updates stale entries to stopped state.
+    /// are still running, re-tracking alive processes, and updating stale entries.
     pub async fn reconcile_process_tracking(&self) -> Result<()> {
         info!("Reconciling process tracking on startup");
 
@@ -189,6 +275,11 @@ impl ProcessManager {
             return Ok(());
         }
 
+        // MySQL 5.7 / 8.0 share port 3306 — only one may run.
+        if service_id.starts_with("mysql") {
+            self.stop_sibling_mysql(service_id).await;
+        }
+
         self.db.update_service_state(service_id, ServiceState::Starting, None)?;
 
         let result = self.start_service_inner(service_id).await;
@@ -200,6 +291,97 @@ impl ProcessManager {
         result
     }
 
+    /// Stop the other MySQL major version so both never bind 3306 together.
+    /// Always stops the sibling first, then waits until port 3306 is free.
+    async fn stop_sibling_mysql(&self, service_id: &str) {
+        let siblings = ["mysql80", "mysql57", "mysql"];
+        for sibling in siblings {
+            if sibling == service_id {
+                continue;
+            }
+            let installed = self
+                .db
+                .get_service_config(sibling)
+                .map(|c| c.installed)
+                .unwrap_or(false);
+            if !installed && !self.is_service_running(sibling).await {
+                continue;
+            }
+
+            info!(
+                "Stopping sibling MySQL {} before starting {}",
+                sibling, service_id
+            );
+            if let Err(error) = self.stop_service(sibling).await {
+                warn!("Failed to stop sibling MySQL {}: {}", sibling, error);
+            }
+            // Force-kill leftover processes from that install if still holding the port.
+            self.force_kill_mysql_by_exe(sibling).await;
+        }
+
+        // Shared MySQL port — wait until free so the new version can bind.
+        let port = self
+            .db
+            .get_service_config(service_id)
+            .map(|c| if c.port > 0 { c.port } else { 3306 })
+            .unwrap_or(3306);
+        let deadline = Instant::now() + Duration::from_secs(12);
+        while Instant::now() < deadline {
+            if !Self::is_port_listening(port) {
+                info!("MySQL port {} is free after sibling stop", port);
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        if Self::is_port_listening(port) {
+            warn!(
+                "Port {} still in use after stopping sibling MySQL; start of {} may fail",
+                port, service_id
+            );
+        }
+    }
+
+    /// Kill mysqld processes whose executable path matches the sibling install.
+    async fn force_kill_mysql_by_exe(&self, service_id: &str) {
+        let Ok(config) = self.db.get_service_config(service_id) else {
+            return;
+        };
+        if config.exe.trim().is_empty() {
+            return;
+        }
+        let target_norm = PathBuf::from(&config.exe)
+            .to_string_lossy()
+            .replace('/', "\\")
+            .to_lowercase();
+        let cwd_norm = config
+            .cwd
+            .as_deref()
+            .map(|c| c.replace('/', "\\").to_lowercase())
+            .filter(|c| !c.is_empty());
+
+        let mut sys = System::new();
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        for (pid, process) in sys.processes() {
+            let Some(exe) = process.exe() else {
+                continue;
+            };
+            let exe_norm = exe.to_string_lossy().replace('/', "\\").to_lowercase();
+            let exact = exe_norm == target_norm;
+            let under_cwd = cwd_norm
+                .as_ref()
+                .map(|cwd| exe_norm.starts_with(cwd) && exe_norm.ends_with("\\mysqld.exe"))
+                .unwrap_or(false);
+            if exact || under_cwd {
+                let pid_u32 = pid.as_u32();
+                info!(
+                    "Force-killing leftover MySQL process {} for {}",
+                    pid_u32, service_id
+                );
+                let _ = self.kill_process_tree(pid_u32).await;
+            }
+        }
+    }
+
     async fn start_service_inner(&self, service_id: &str) -> Result<()> {
         let config = self.db.get_service_config(service_id)?;
 
@@ -207,36 +389,137 @@ impl ProcessManager {
             anyhow::bail!("运行环境未导入或未安装：{}", service_id);
         }
 
-        let exe = config.exe.clone();
-        let args: Vec<String> = config
+        let mut exe = heal_install_path(&config.exe);
+        let mut args: Vec<String> = config
             .args
             .as_deref()
             .map(|s| shell_words(s))
             .unwrap_or_default();
-        let cwd = config.cwd.clone().unwrap_or_else(|| {
+        let mut port = config.port;
+        let mut cwd = config.cwd.clone().unwrap_or_else(|| {
             PathBuf::from(&exe)
                 .parent()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| ".".to_string())
         });
-        let env_extra = config.env.unwrap_or_default();
+        cwd = heal_install_path(&cwd);
+        // If args embed old deps paths, rebuild them for special services below.
+        let mut env_extra = config.env.unwrap_or_default();
 
         // Verify executable exists
         if !Path::new(&exe).exists() {
-            anyhow::bail!("可执行文件不存在：{}", exe);
+            // One more try: sibling without /deps/
+            let alt = heal_install_path(&config.exe);
+            if Path::new(&alt).exists() {
+                exe = alt;
+            } else {
+                anyhow::bail!("可执行文件不存在：{}", exe);
+            }
         }
 
-        if config.port > 0 && Self::is_port_listening(config.port) {
-            // Check if the port is occupied and get process info
-            let port_result = self.port_manager.check_port(config.port);
+        if service_id == "redis" {
+            // Ensure a default redis.conf exists in the cwd
+            let default_conf = PathBuf::from(&cwd).join("redis.conf");
+            if !default_conf.exists() {
+                let default_config = r#"# Redis configuration (managed by WinServer)
+port 6379
+bind 127.0.0.1
+protected-mode yes
+maxmemory 256mb
+maxmemory-policy allkeys-lru
+appendonly no
+save ""
+"#;
+                let _ = std::fs::write(&default_conf, default_config);
+                info!("Created default redis.conf at {}", default_conf.display());
+            }
+            if let Some(conf_path) = service_config_path(&config.config_file, &cwd, "redis.conf") {
+                if let Some(config_port) = parse_redis_port(&conf_path) {
+                    port = config_port;
+                    let _ = self.db.update_service_port(service_id, port);
+                }
+                args = vec![conf_path.to_string_lossy().to_string()];
+            }
+        } else if service_id == "minio" {
+            let env_path = service_config_path(&config.config_file, &cwd, "minio.env");
+            let minio_env = env_path
+                .as_deref()
+                .map(parse_env_file)
+                .unwrap_or_default();
+            for (key, value) in &minio_env {
+                env_extra.insert(key.clone(), value.clone());
+            }
+            if let Some(path) = env_path {
+                env_extra.insert("MINIO_CONFIG_ENV_FILE".to_string(), path.to_string_lossy().to_string());
+            }
+            let api_port = minio_env
+                .get("MINIO_API_PORT")
+                .and_then(|value| parse_port(value))
+                .unwrap_or(port);
+            let console_port = minio_env
+                .get("MINIO_CONSOLE_PORT")
+                .and_then(|value| parse_port(value))
+                .unwrap_or(9001);
+            port = api_port;
+            let _ = self.db.update_service_port(service_id, port);
+            let data_dir = PathBuf::from(&cwd).join("data");
+            let _ = std::fs::create_dir_all(&data_dir);
+            args = vec![
+                "server".to_string(),
+                data_dir.to_string_lossy().to_string(),
+                "--address".to_string(),
+                format!(":{}", api_port),
+                "--console-address".to_string(),
+                format!(":{}", console_port),
+            ];
+        } else if service_id.starts_with("mysql") {
+            // Always pin mysqld to the managed my.ini. Do not pass --console (that
+            // forces a visible console on Windows even with CREATE_NO_WINDOW in some builds).
+            let ini_path = service_config_path(&config.config_file, &cwd, "my.ini")
+                .unwrap_or_else(|| PathBuf::from(&cwd).join("my.ini"));
+            if !ini_path.exists() {
+                anyhow::bail!(
+                    "MySQL 配置文件不存在：{}。请先在软件管理中重新安装/导入 MySQL。",
+                    ini_path.display()
+                );
+            }
+            // Read port from my.ini if present
+            if let Ok(content) = std::fs::read_to_string(&ini_path) {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if let Some(rest) = trimmed.strip_prefix("port") {
+                        let value = rest
+                            .trim_start_matches(|c: char| c == '=' || c.is_whitespace())
+                            .trim();
+                        if let Ok(p) = value.parse::<u16>() {
+                            if p > 0 {
+                                port = p;
+                                let _ = self.db.update_service_port(service_id, port);
+                            }
+                        }
+                    }
+                }
+            }
+            let data_dir = PathBuf::from(&cwd).join("data");
+            if !data_dir.exists() {
+                anyhow::bail!(
+                    "MySQL data 目录不存在：{}。安装时初始化可能失败，请重新安装 MySQL。",
+                    data_dir.display()
+                );
+            }
+            // Use --defaults-file=path (no extra quotes — CreateProcess does not use a shell)
+            args = vec![format!("--defaults-file={}", ini_path.to_string_lossy())];
+        }
+
+        if port > 0 && Self::is_port_listening(port) {
+            let port_result = self.port_manager.check_port(port);
             if let (Some(pid), Some(process_name)) = (port_result.pid, port_result.process_name) {
                 anyhow::bail!(
                     "端口 {} 已被占用（进程: {} PID: {}），无法启动 {}",
-                    config.port, process_name, pid, service_id
+                    port, process_name, pid, service_id
                 );
-            } else {
-                anyhow::bail!("端口 {} 已被占用，无法启动 {}", config.port, service_id);
             }
+            anyhow::bail!("端口 {} 已被占用，无法启动 {}", port, service_id);
         }
 
         // Auto-start PHP-CGI when Nginx or Apache starts
@@ -247,23 +530,35 @@ impl ProcessManager {
         // Spawn the process
         info!("Starting service {}: {} {:?}", service_id, exe, args);
 
+        // Capture stderr for services that commonly fail with useful diagnostics
+        let stderr_target = if service_id == "redis" || service_id.starts_with("mysql") {
+            let log_dir = PathBuf::from(&cwd).join("logs");
+            let _ = std::fs::create_dir_all(&log_dir);
+            let log_name = if service_id.starts_with("mysql") {
+                "mysql-stderr.log"
+            } else {
+                "redis-stderr.log"
+            };
+            let log_file = log_dir.join(log_name);
+            std::fs::File::create(&log_file)
+                .map(std::process::Stdio::from)
+                .unwrap_or(std::process::Stdio::null())
+        } else {
+            std::process::Stdio::null()
+        };
+
         let mut cmd = std::process::Command::new(&exe);
         cmd.args(&args)
             .current_dir(&cwd)
             .envs(&env_extra)
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stderr(stderr_target);
 
-        // On Windows, use CREATE_NO_WINDOW + DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP
-        // to prevent console windows from appearing on screen.
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            const DETACHED_PROCESS: u32 = 0x00000008;
-            const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-            cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-        }
+        // CREATE_NO_WINDOW only — do not combine with DETACHED_PROCESS (MSDN:
+        // CREATE_NO_WINDOW is ignored when DETACHED_PROCESS is also set), which
+        // previously left mysqld/redis/nginx console windows visible.
+        crate::process_util::apply_no_window(&mut cmd);
 
         let child = cmd
             .spawn()
@@ -285,13 +580,86 @@ impl ProcessManager {
             );
         }
 
+        // MySQL cold-start (buffer pool, InnoDB recovery) often needs longer than 8s.
+        let ready_timeout = if service_id.starts_with("mysql") {
+            Duration::from_secs(30)
+        } else {
+            Duration::from_secs(8)
+        };
         let ready = self
-            .wait_for_service_ready(pid, config.port, Duration::from_secs(8))
+            .wait_for_service_ready(pid, port, ready_timeout)
             .await;
         if let Err(error) = ready {
             let _ = self.kill_process_tree(pid).await;
-            let mut processes = self.processes.lock().await;
-            processes.remove(service_id);
+            {
+                let mut processes = self.processes.lock().await;
+                processes.remove(service_id);
+            }
+            if service_id.starts_with("mysql") {
+                let stderr_content = std::fs::read_to_string(
+                    PathBuf::from(&cwd).join("logs").join("mysql-stderr.log"),
+                )
+                .unwrap_or_default();
+                let detail = stderr_content.trim();
+                if detail.is_empty() {
+                    anyhow::bail!("MySQL 启动失败：{}", error);
+                }
+                anyhow::bail!("MySQL 启动失败：{}；详情：{}", error, detail);
+            }
+            // For Redis, retry once without a config file
+            if service_id == "redis" && !args.is_empty() {
+                let stderr_content = std::fs::read_to_string(
+                    PathBuf::from(&cwd).join("logs").join("redis-stderr.log")
+                ).unwrap_or_default();
+                warn!("Redis first attempt failed (PID {}): {}. Stderr: {}", pid, error, stderr_content);
+                info!("Redis retrying without config file...");
+                let mut retry_cmd = std::process::Command::new(&exe);
+                retry_cmd.args(Vec::<String>::new())
+                    .current_dir(&cwd)
+                    .envs(&env_extra)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                crate::process_util::apply_no_window(&mut retry_cmd);
+                match retry_cmd.spawn() {
+                    Ok(retry_child) => {
+                        let retry_pid = retry_child.id();
+                        info!("Redis retry started with PID {}", retry_pid);
+                        {
+                            let mut processes = self.processes.lock().await;
+                            processes.insert(
+                                service_id.to_string(),
+                                ProcessEntry {
+                                    pid: retry_pid,
+                                    service_id: service_id.to_string(),
+                                    exe: exe.clone(),
+                                },
+                            );
+                        }
+                        let retry_ready = self
+                            .wait_for_service_ready(retry_pid, port, Duration::from_secs(8))
+                            .await;
+                        if let Err(retry_error) = retry_ready {
+                            let _ = self.kill_process_tree(retry_pid).await;
+                            let mut processes = self.processes.lock().await;
+                            processes.remove(service_id);
+                            anyhow::bail!("Redis 启动失败（首次尝试+无配置重试均未成功）: {}", retry_error);
+                        }
+                        self.db
+                            .update_service_state(service_id, ServiceState::Running, Some(retry_pid))?;
+                        self.db.add_log(
+                            "service.start",
+                            service_id,
+                            true,
+                            &format!("服务已启动（无配置模式），PID {}，端口 {}", retry_pid, port),
+                        )?;
+                        return Ok(());
+                    }
+                    Err(spawn_err) => {
+                        anyhow::bail!("Redis 启动失败（无法重试）: {}", spawn_err);
+                    }
+                }
+            }
             anyhow::bail!("{}", error);
         }
 
@@ -302,7 +670,7 @@ impl ProcessManager {
             "service.start",
             service_id,
             true,
-            &format!("服务已启动，PID {}，端口 {}", pid, config.port),
+            &format!("服务已启动，PID {}，端口 {}", pid, port),
         )?;
 
         Ok(())
@@ -492,9 +860,11 @@ impl ProcessManager {
                 .unwrap_or_else(|| ".".to_string())
         });
 
-        let output = std::process::Command::new(exe)
+        let mut cmd = crate::process_util::silent_command(exe);
+        let output = cmd
             .args(["-p", &cwd, "-s", "quit"])
             .current_dir(&cwd)
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .output()
@@ -514,8 +884,10 @@ impl ProcessManager {
     async fn kill_process_tree(&self, pid: u32) -> Result<()> {
         info!("Killing process tree for PID {}", pid);
 
-        let output = std::process::Command::new("taskkill.exe")
+        let mut cmd = crate::process_util::silent_command("taskkill.exe");
+        let output = cmd
             .args(["/F", "/T", "/PID", &pid.to_string()])
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .output()
@@ -631,7 +1003,7 @@ impl ProcessManager {
         !self.is_pid_alive(pid)
     }
 
-    fn is_port_listening(port: u16) -> bool {
+    pub(crate) fn is_port_listening(port: u16) -> bool {
         if port == 0 {
             return false;
         }
@@ -755,6 +1127,59 @@ mod tests {
             .expect("test service")
     }
 
+    #[test]
+    fn parse_redis_port_uses_uncommented_port() {
+        let dir = std::env::temp_dir().join(format!("winserver-redis-conf-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create redis conf dir");
+        let conf = dir.join("redis.conf");
+        fs::write(
+            &conf,
+            "# port 6379\n\nbind 127.0.0.1\nport 6388\nprotected-mode yes\n",
+        )
+        .expect("write redis conf");
+
+        assert_eq!(parse_redis_port(&conf), Some(6388));
+    }
+
+    #[test]
+    fn parse_env_file_strips_quotes_and_ignores_comments() {
+        let dir = std::env::temp_dir().join(format!("winserver-minio-env-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create minio env dir");
+        let env = dir.join("minio.env");
+        fs::write(
+            &env,
+            "# comment\nMINIO_ROOT_USER=\"admin\"\nMINIO_ROOT_PASSWORD='secret'\nMINIO_API_PORT=9010\n",
+        )
+        .expect("write minio env");
+
+        let parsed = parse_env_file(&env);
+        assert_eq!(parsed.get("MINIO_ROOT_USER").map(String::as_str), Some("admin"));
+        assert_eq!(parsed.get("MINIO_ROOT_PASSWORD").map(String::as_str), Some("secret"));
+        assert_eq!(parsed.get("MINIO_API_PORT").map(String::as_str), Some("9010"));
+    }
+
+    #[test]
+    fn service_config_path_prefers_db_path_then_existing_fallback() {
+        let dir = std::env::temp_dir().join(format!("winserver-config-path-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create service dir");
+        let fallback = dir.join("redis.conf");
+        fs::write(&fallback, "port 6379\n").expect("write fallback");
+        let explicit = dir.join("custom.conf");
+
+        assert_eq!(
+            service_config_path(&Some(explicit.to_string_lossy().to_string()), &dir.to_string_lossy(), "redis.conf"),
+            Some(explicit)
+        );
+        assert_eq!(
+            service_config_path(&None, &dir.to_string_lossy(), "redis.conf"),
+            Some(fallback)
+        );
+    }
+
+    fn make_process_manager(db: Arc<Database>) -> ProcessManager {
+        ProcessManager::new(db, Arc::new(super::super::PortManager::new()))
+    }
+
     #[tokio::test]
     async fn start_and_stop_service_verifies_pid_and_port() {
         let Some(node) = node_exe() else {
@@ -768,7 +1193,7 @@ mod tests {
         let args = format!("\"{}\"", script.to_string_lossy());
         insert_test_service(&db, "test-listener", &node, &args, &dir, port);
 
-        let manager = ProcessManager::new(db.clone());
+        let manager = make_process_manager(db.clone());
         manager
             .start_service("test-listener")
             .await
@@ -807,7 +1232,7 @@ mod tests {
         let args = format!("\"{}\"", script.to_string_lossy());
         insert_test_service(&db, "test-conflict", &node, &args, &dir, port);
 
-        let manager = ProcessManager::new(db.clone());
+        let manager = make_process_manager(db.clone());
         let error = manager
             .start_service("test-conflict")
             .await

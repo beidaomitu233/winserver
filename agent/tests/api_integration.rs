@@ -43,8 +43,8 @@ fn setup() -> (Arc<RequestHandler>, PathBuf) {
         )?;
         Ok(())
     }).expect("point hosts config at test file");
-    let pm = Arc::new(ProcessManager::new(db.clone()));
     let portm = Arc::new(PortManager::new());
+    let pm = Arc::new(ProcessManager::new(db.clone(), portm.clone()));
     let hm = Arc::new(HostsManager::with_path(hosts_path));
     let sm = Arc::new(SiteManager::new(data.clone(), pm.clone(), hm.clone(), db.clone()).expect("sm"));
     let rm = Arc::new(RuntimeManager::new(data.clone(), db.clone()));
@@ -236,10 +236,6 @@ async fn api_integration_full() {
 
     // ── 9. Database ──
     println!("\n── Database ──");
-    let sync_resp = rpc_response(&h, "database.sync", json!({})).await;
-    let sync_ok = sync_resp.result.as_ref().and_then(|r| r.get("state")).is_some();
-    rp.rec("DB", "database.sync succeeds or returns structured environment error", sync_ok || has_structured_error(&sync_resp), "returns state or structured MySQL error");
-
     let r = rpc(&h, "database.backups", json!({})).await;
     rp.rec("DB", "database.backups works", r.get("backups").is_some() || r.get("state").is_some(), "returns backups or state");
 

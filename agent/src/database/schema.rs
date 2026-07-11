@@ -87,20 +87,24 @@ pub fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
     )?;
     add_column_if_missing(conn, "runtimes", "config_template", "TEXT")?;
 
-    // Databases table
+    // Databases table (composite key: same logical name may exist on MySQL 5.7 and 8.0)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS databases (
-            name TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
             user TEXT NOT NULL,
             password TEXT NOT NULL,
             engine TEXT DEFAULT 'mysql',
             size TEXT DEFAULT '',
             status TEXT DEFAULT 'active',
+            mysql_service_id TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (name, mysql_service_id)
         )",
         [],
     )?;
+    add_column_if_missing(conn, "databases", "mysql_service_id", "TEXT NOT NULL DEFAULT ''")?;
+    migrate_databases_composite_pk(conn)?;
 
     // Software table
     conn.execute(
@@ -201,6 +205,72 @@ fn add_column_if_missing(
     Ok(())
 }
 
+/// Rebuild `databases` so the primary key is `(name, mysql_service_id)`.
+/// Older installs used `name` alone, which mixed MySQL 5.7 / 8.0 records.
+fn migrate_databases_composite_pk(conn: &Connection) -> anyhow::Result<()> {
+    let create_sql: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'databases'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+
+    let Some(sql) = create_sql else {
+        return Ok(());
+    };
+    let normalized = sql.to_lowercase().replace(' ', "");
+    if normalized.contains("primarykey(name,mysql_service_id)") {
+        return Ok(());
+    }
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS databases_v2 (
+            name TEXT NOT NULL,
+            user TEXT NOT NULL,
+            password TEXT NOT NULL,
+            engine TEXT DEFAULT 'mysql',
+            size TEXT DEFAULT '',
+            status TEXT DEFAULT 'active',
+            mysql_service_id TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (name, mysql_service_id)
+        )",
+        [],
+    )?;
+
+    // Prefer currently installed/running MySQL for untagged legacy rows.
+    let fallback_service: String = conn
+        .query_row(
+            "SELECT id FROM service_instances
+             WHERE id IN ('mysql80', 'mysql57', 'mysql') AND installed = 1
+             ORDER BY CASE WHEN pid IS NOT NULL THEN 0 ELSE 1 END,
+                      CASE id WHEN 'mysql80' THEN 0 WHEN 'mysql57' THEN 1 ELSE 2 END
+             LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "mysql80".to_string());
+
+    conn.execute(
+        "INSERT OR IGNORE INTO databases_v2
+            (name, user, password, engine, size, status, mysql_service_id, created_at, updated_at)
+         SELECT name, user, password, engine, size, status,
+                CASE
+                    WHEN mysql_service_id IS NULL OR TRIM(mysql_service_id) = '' THEN ?1
+                    ELSE mysql_service_id
+                END,
+                created_at, updated_at
+         FROM databases",
+        rusqlite::params![fallback_service],
+    )?;
+
+    conn.execute("DROP TABLE databases", [])?;
+    conn.execute("ALTER TABLE databases_v2 RENAME TO databases", [])?;
+    Ok(())
+}
+
 /// Seed default data into the database if it is empty (first run).
 pub fn seed_default_data(conn: &Connection) -> anyhow::Result<()> {
     // Only seed if service_instances is empty
@@ -221,7 +291,8 @@ pub fn seed_default_data(conn: &Connection) -> anyhow::Result<()> {
         // (id, name, service_type, process_name, port, exe, args, cwd, config_file, auto, installed)
         ("nginx", "Nginx", "nginx", "nginx.exe", 80i32, "", "", "", "", 1, 0),
         ("apache", "Apache2.4", "apache", "httpd.exe", 80i32, "", "", "", "", 0, 0),
-        ("mysql57", "MySQL5.7", "mysql57", "mysqld.exe", 3307i32, "", "", "", "", 0, 0),
+        // Both MySQL versions share port 3306; only one is expected to run at a time.
+        ("mysql57", "MySQL5.7", "mysql57", "mysqld.exe", 3306i32, "", "", "", "", 0, 0),
         ("mysql80", "MySQL8.0", "mysql80", "mysqld.exe", 3306i32, "", "", "", "", 1, 0),
         ("php73", "PHP7.3 CGI", "php", "php-cgi.exe", 9073i32, "", "", "", "", 1, 0),
         ("redis", "Redis", "redis", "redis-server.exe", 6379i32, "", "", "", "", 0, 0),
