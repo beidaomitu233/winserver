@@ -103,6 +103,20 @@ function runUnitTests() {
   }
 }
 
+// ── Phase 3: Runtime Resources ──────────────────────────────────────────────
+
+function runResourceChecks() {
+  logPhase('Phase 2c: Runtime Resource Checks')
+  try {
+    run('node tests/verify-runtime-resources.js', { timeout: 30_000 })
+    console.log('  ✓ Runtime resources verified')
+    return true
+  } catch {
+    console.log('  ✗ Runtime resource verification failed')
+    return false
+  }
+}
+
 // ── Phase 4: Start Tauri App + Run E2E ──────────────────────────────────────
 
 async function runE2ETests() {
@@ -225,6 +239,7 @@ async function main() {
     build: buildApp(),
     backend: false,
     unit: false,
+    resources: false,
     e2e: false,
   }
 
@@ -235,6 +250,7 @@ async function main() {
 
   results.backend = runBackendTests()
   results.unit = runUnitTests()
+  results.resources = runResourceChecks()
   await runE2ETests()
   results.e2e = true // E2E partial results still valuable
 
@@ -247,6 +263,7 @@ async function main() {
   console.log(`  Build:     ${results.build ? '✓ PASS' : '✗ FAIL'}`)
   console.log(`  Backend:   ${results.backend ? '✓ PASS' : '✗ SOME FAIL'}`)
   console.log(`  Unit:      ${results.unit ? '✓ PASS' : '✗ SOME FAIL'}`)
+  console.log(`  Resources: ${results.resources ? '✓ PASS' : '✗ FAIL'}`)
   console.log(`  E2E:       ${results.e2e ? '✓ DONE' : '✗ FAIL'}`)
   console.log(`\n  Reports: test-results/index.html\n`)
 }

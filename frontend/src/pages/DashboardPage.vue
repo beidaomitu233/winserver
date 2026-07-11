@@ -35,12 +35,13 @@ const settingsStore = useSettingsStore()
 const currentPage = inject<Ref<string>>('currentPage')!
 const resources = inject<Ref<SystemResource>>('systemResource')!
 const openConfigEditor = inject<(fileId: string, label: string, filePath: string) => void>('openConfigEditor')!
+const openServiceConfigModal = inject<(svc: { id: string; name: string; config_file: string | null }) => void>('openServiceConfigModal')!
 
 const collapsed = ref(localStorage.getItem('ws-svc-collapsed') === '1')
 const logs = ref<Array<{ time: string; type: string; text: string }>>([])
 
 const dashboardServices = computed(() => {
-  const primaryTypes = new Set(['nginx', 'php', 'mysql', 'mysql57', 'mysql80', 'redis'])
+  const primaryTypes = new Set(['nginx', 'apache', 'php', 'php73', 'mysql57', 'mysql80', 'redis', 'pgsql', 'minio'])
   return serviceStore.services.filter(service =>
     primaryTypes.has(service.id) || primaryTypes.has(service.service_type)
   )
@@ -100,7 +101,6 @@ async function restartService(id: string) {
 function openServiceConfig(svc: { id: string; name: string; config_file: string | null }) {
   // Redis/MinIO get a dedicated dual-mode config modal; others fall back to
   // the generic config-file text editor.
-  const openServiceConfigModal = inject<(svc: { id: string; name: string; config_file: string | null }) => void>('openServiceConfigModal')
   if (svc.id === 'redis' || svc.id === 'minio') {
     openServiceConfigModal?.(svc)
     return
@@ -225,25 +225,30 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- Quick actions -->
       <div class="home-quickbar home-quickbar-v2">
         <button class="home-quick" @click="$emit('open-create-site')">
-          <svg class="icon icon-sm"><use href="#i-plus" /></svg>新建站点
+          <svg class="icon icon-sm"><use href="#i-plus" /></svg>
+          新建站点
         </button>
         <button class="home-quick" @click="currentPage = 'sites'">
-          <svg class="icon icon-sm"><use href="#i-globe" /></svg>网站
+          <svg class="icon icon-sm"><use href="#i-globe" /></svg>
+          网站
         </button>
         <button class="home-quick" @click="currentPage = 'database'">
-          <svg class="icon icon-sm"><use href="#i-database" /></svg>数据库
+          <svg class="icon icon-sm"><use href="#i-database" /></svg>
+          数据库
         </button>
         <button class="home-quick" @click="currentPage = 'software'">
-          <svg class="icon icon-sm"><use href="#i-grid" /></svg>环境
-        </button>
-        <button class="home-quick" @click="currentPage = 'files'">
-          <svg class="icon icon-sm"><use href="#i-folder" /></svg>文件
+          <svg class="icon icon-sm"><use href="#i-box" /></svg>
+          环境
         </button>
         <button class="home-quick" @click="$emit('show-ports')">
-          <svg class="icon icon-sm"><use href="#i-network" /></svg>端口
+          <svg class="icon icon-sm"><use href="#i-network" /></svg>
+          端口
+        </button>
+        <button class="home-quick" @click="$emit('show-logs')">
+          <svg class="icon icon-sm"><use href="#i-file" /></svg>
+          日志
         </button>
       </div>
     </section>

@@ -233,11 +233,6 @@ pub async fn db_delete_backup(state: State<'_, Arc<App>>, path: String) -> Resul
 }
 
 #[tauri::command]
-pub async fn files_list(state: State<'_, Arc<App>>, path: String) -> Result<serde_json::Value, String> {
-    call_handler(&state, "files.list", json!({ "path": path })).await
-}
-
-#[tauri::command]
 pub async fn software_install(state: State<'_, Arc<App>>, software_id: String) -> Result<serde_json::Value, String> {
     call_handler(&state, "software.install", json!({ "softwareId": software_id })).await
 }
@@ -285,6 +280,11 @@ pub async fn runtime_import(
 pub async fn open_folder(path: String) -> Result<serde_json::Value, String> {
     std::process::Command::new("explorer.exe").arg(&path).spawn().map_err(|e| e.to_string())?;
     Ok(json!({ "message": format!("已打开: {}", path) }))
+}
+
+#[tauri::command]
+pub async fn kill_process(state: State<'_, Arc<App>>, pid: u32) -> Result<serde_json::Value, String> {
+    call_handler(&state, "port.killProcess", json!({ "pid": pid })).await
 }
 
 #[tauri::command]

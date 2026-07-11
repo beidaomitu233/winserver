@@ -22,6 +22,14 @@ impl RuntimeManager {
         Self { data_dir, db }
     }
 
+    fn update_bundled_companion_software(&self, software_id: &str, target_dir: &Path, install_path: &str) {
+        if software_id == "minio" && target_dir.join("mc.exe").exists() {
+            if let Err(error) = self.db.update_software_bundled_installed("mc", install_path) {
+                warn!("failed to mark bundled MinIO client as installed: {}", error);
+            }
+        }
+    }
+
     /// List all installed runtimes by scanning the runtimes directory.
     pub fn list_runtimes(&self) -> Result<Vec<RuntimeManifest>> {
         let imported = self.db.list_runtimes()?;
@@ -124,7 +132,28 @@ impl RuntimeManager {
             let already_installed = self.db.get_software(software_id).map(|sw| sw.installed).unwrap_or(false);
             if already_installed {
                 info!("install_bundled_runtime: target_dir exists and software already installed, skipping (no-op)");
+                normalize_service_root(&target_dir, service_id)?;
                 let install_path_str = target_dir.to_string_lossy().to_string();
+                match service_id.as_str() {
+                    "nginx" => {
+                        self.import_runtime(RuntimeType::Nginx, &install_path_str, None)?;
+                    }
+                    "php" | "php73" => {
+                        self.import_runtime(RuntimeType::Php, &install_path_str, None)?;
+                    }
+                    s if s.starts_with("php") => {
+                        self.import_runtime(RuntimeType::Php, &install_path_str, None)?;
+                    }
+                    _ => {
+                        if let Err(error) = self.register_generic_service(software_id, service_id, &install_path_str) {
+                            self.db.update_service_installed(service_id, false).ok();
+                            self.db.update_software_installed(software_id, false).ok();
+                            self.db.update_software_status(software_id, "failed").ok();
+                            return Err(error.context("已安装服务文件校验失败"));
+                        }
+                        self.update_bundled_companion_software(software_id, &target_dir, &install_path_str);
+                    }
+                }
                 return Ok(RuntimeManifest {
                     id: software_id.to_string(),
                     runtime_type: RuntimeType::Nginx,
@@ -178,6 +207,8 @@ impl RuntimeManager {
             }
         }
 
+        normalize_service_root(&target_dir, service_id)?;
+
         // Register the service
         let install_path_str = target_dir.to_string_lossy().to_string();
         let runtime_type = match service_id.as_str() {
@@ -194,6 +225,7 @@ impl RuntimeManager {
                 }
 
                 self.db.update_software_bundled_installed(software_id, &install_path_str)?;
+                self.update_bundled_companion_software(software_id, &target_dir, &install_path_str);
                 self.db.add_log("software.install_bundled", software_id, true, &format!("bundled install {} complete", software_id))?;
 
                 return Ok(RuntimeManifest {
@@ -259,7 +291,7 @@ impl RuntimeManager {
         info!("extract_zip_to: zip has {} entries", archive.len());
 
         let entry_names: Vec<String> = (0..archive.len())
-            .filter_map(|i| archive.by_index(i).ok().map(|e| e.name().to_string()))
+            .filter_map(|i| archive.by_index(i).ok().map(|e| normalize_zip_entry_name(e.name())))
             .collect();
         let top_dir = self.detect_top_dir_from_names(&entry_names);
         info!("extract_zip_to: top_dir={:?}", top_dir);
@@ -270,7 +302,7 @@ impl RuntimeManager {
         let mut file_count = 0u32;
         for i in 0..archive2.len() {
             let mut entry = archive2.by_index(i)?;
-            let entry_path = entry.name().to_string();
+            let entry_path = normalize_zip_entry_name(entry.name());
             let relative_path = if let Some(ref prefix) = top_dir {
                 match entry_path.strip_prefix(prefix.as_str()) {
                     Some(rest) => rest.to_string(),
@@ -306,6 +338,11 @@ impl RuntimeManager {
 
     /// Initialize MySQL data directory if it doesn't exist.
     fn initialize_mysql_if_needed(&self, service_id: &str, install_dir: &Path) -> Result<()> {
+        let my_ini = install_dir.join("my.ini");
+        let ini_content = render_managed_mysql_ini(service_id, install_dir);
+        fs::write(&my_ini, &ini_content)?;
+        info!("initialize_mysql_if_needed: wrote managed my.ini at {}", my_ini.display());
+
         let data_dir = install_dir.join("data");
         if data_dir.exists() {
             info!("initialize_mysql_if_needed: data dir already exists for {}", service_id);
@@ -320,35 +357,10 @@ impl RuntimeManager {
 
         info!("initialize_mysql_if_needed: initializing MySQL data directory for {}", service_id);
 
-        // Generate my.ini if it doesn't exist
-        let my_ini = install_dir.join("my.ini");
-        if !my_ini.exists() {
-            let dir_str = install_dir.to_string_lossy().replace('\\', "/");
-            let port = if service_id == "mysql57" { 3307 } else { 3306 };
-            let ini_content = format!(
-r#"[mysql]
-default-character-set=utf8
-
-[mysqld]
-port={}
-default_authentication_plugin=mysql_native_password
-basedir={}/
-datadir={}/data/
-character-set-server=utf8
-default-storage-engine=InnoDB
-max_connections=200
-innodb_buffer_pool_size=64M
-
-[client]
-port={}
-default-character-set=utf8
-"#, port, dir_str, dir_str, port);
-            fs::write(&my_ini, &ini_content)?;
-            info!("initialize_mysql_if_needed: wrote my.ini");
-        }
-
         // Run mysqld --initialize-insecure
+        let defaults_file = format!("--defaults-file={}", my_ini.to_string_lossy());
         let output = silent_command_path(&mysqld_exe)
+            .arg(defaults_file)
             .args(["--initialize-insecure", "--console"])
             .current_dir(install_dir)
             .stdout(std::process::Stdio::piped())
@@ -357,38 +369,62 @@ default-character-set=utf8
 
         match output {
             Ok(out) => {
-                if out.status.success() {
+                if out.status.success() && data_dir.exists() {
                     info!("initialize_mysql_if_needed: MySQL data directory initialized successfully");
+                    Ok(())
                 } else {
                     let stderr = String::from_utf8_lossy(&out.stderr);
-                    warn!("initialize_mysql_if_needed: MySQL init warning: {}", stderr);
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    anyhow::bail!(
+                        "MySQL 初始化失败：{}{}",
+                        stderr.trim(),
+                        if stdout.trim().is_empty() { String::new() } else { format!(" {}", stdout.trim()) }
+                    );
                 }
             }
             Err(e) => {
-                warn!("initialize_mysql_if_needed: failed to run mysqld --initialize: {}", e);
+                Err(e).context("failed to run mysqld --initialize")
             }
         }
-
-        Ok(())
     }
 
     /// Detect local services already installed on this machine.
     /// Returns a map of service_id -> install_path for found services.
+    ///
+    /// Detection order (first match wins):
+    ///   1. The app's own managed dir `data_dir/server/{service_id}` — where
+    ///      bundled/runtime installs land. This lets services survive a DB reset
+    ///      or a fresh launch against an existing data directory.
+    ///   2. Well-known system install paths.
+    ///   3. System PATH via `where <marker>` (minio included).
     pub fn detect_local_services(&self) -> std::collections::HashMap<String, String> {
         let mut found = std::collections::HashMap::new();
 
-        // Check common directories and PATH for each service
+        // (service_id, well-known system dirs, marker file relative to the dir)
         let checks: &[(&str, &[&str], &str)] = &[
             ("nginx", &["C:/nginx", "D:/nginx", "C:/Program Files/nginx"], "nginx.exe"),
             ("mysql80", &["C:/Program Files/MySQL/MySQL Server 8.0", "D:/MySQL8", "D:/mysql80"], "bin/mysqld.exe"),
             ("mysql57", &["C:/Program Files/MySQL/MySQL Server 5.7", "D:/MySQL5", "D:/mysql57"], "bin/mysqld.exe"),
             ("redis", &["C:/Redis", "D:/Redis", "C:/Program Files/Redis"], "redis-server.exe"),
-            ("minio", &[], "minio.exe"),
+            ("minio", &["C:/minio", "D:/minio", "C:/Program Files/minio"], "minio.exe"),
+            ("pgsql", &["C:/Program Files/PostgreSQL", "D:/PostgreSQL", "D:/pgsql"], "bin/pg_ctl.exe"),
+            ("apache", &["C:/Apache24", "D:/Apache24", "C:/Program Files/Apache Software Foundation/Apache2.4"], "bin/httpd.exe"),
             ("php73", &["C:/php", "D:/php", "C:/xampp/php"], "php-cgi.exe"),
         ];
 
         for (service_id, dirs, marker) in checks {
-            // Check explicit directories
+            // 1. App-managed directory first (survives DB resets, portable installs).
+            let managed_dir = self.data_dir.join("server").join(service_id);
+            let _ = normalize_service_root(&managed_dir, service_id);
+            let managed_marker = managed_dir.join(marker);
+            if managed_marker.exists() {
+                let p = managed_dir.to_string_lossy().replace('\\', "/");
+                info!("detect_local_services: found {} in app-managed dir {}", service_id, p);
+                found.insert(service_id.to_string(), p);
+                continue;
+            }
+
+            // 2. Well-known system directories.
             for dir in *dirs {
                 let marker_path = PathBuf::from(dir).join(marker);
                 if marker_path.exists() {
@@ -398,8 +434,9 @@ default-character-set=utf8
                 }
             }
 
-            // If not found in explicit dirs, check PATH
-            if !found.contains_key(*service_id) && !dirs.is_empty() {
+            // 3. System PATH. Minio ships a single exe, so it is most commonly on
+            //    PATH; always probe PATH regardless of whether system dirs matched.
+            if !found.contains_key(*service_id) {
                 if let Ok(output) = silent_command("where").arg(marker).output() {
                     if output.status.success() {
                         let path_str = String::from_utf8_lossy(&output.stdout);
@@ -415,6 +452,27 @@ default-character-set=utf8
         }
 
         found
+    }
+
+    /// Register a service detected on disk into the DB (marks `installed = 1`
+    /// and fills exe/args/config_file). Used by run_auto_setup when a local
+    /// installation is found, so the UI no longer shows "未安装".
+    pub fn register_detected_service(&self, software_id: &str, service_id: &str, install_path: &str) -> Result<()> {
+        info!("register_detected_service: software_id={} service_id={} path={}", software_id, service_id, install_path);
+        match service_id {
+            "nginx" => {
+                self.import_runtime(RuntimeType::Nginx, install_path, Some(80))?;
+            }
+            "php73" | "php" => {
+                self.import_runtime(RuntimeType::Php, install_path, None)?;
+            }
+            _ => {
+                self.register_generic_service(software_id, service_id, install_path)?;
+            }
+        }
+        // Mark the software row installed too, so the Software page agrees.
+        self.db.update_software_bundled_installed(software_id, install_path)?;
+        Ok(())
     }
 
     /// Download and install software from its download_url.
@@ -541,7 +599,7 @@ default-character-set=utf8
 
             // First pass: collect entry names and detect top-level directory
             let entry_names: Vec<String> = (0..archive.len())
-                .filter_map(|i| archive.by_index(i).ok().map(|e| e.name().to_string()))
+                .filter_map(|i| archive.by_index(i).ok().map(|e| normalize_zip_entry_name(e.name())))
                 .collect();
             let top_dir = self.detect_top_dir_from_names(&entry_names);
             info!("do_download_and_install: top_dir={:?}", top_dir);
@@ -553,7 +611,7 @@ default-character-set=utf8
             let mut file_count = 0u32;
             for i in 0..archive2.len() {
                 let mut entry = archive2.by_index(i)?;
-                let entry_path = entry.name().to_string();
+                let entry_path = normalize_zip_entry_name(entry.name());
                 let relative_path = if let Some(ref prefix) = top_dir {
                     match entry_path.strip_prefix(prefix.as_str()) {
                         Some(rest) => rest.to_string(),
@@ -588,6 +646,8 @@ default-character-set=utf8
             }
             info!("do_download_and_install: extracted {} files", file_count);
         }
+
+        normalize_service_root(target_dir, service_id)?;
 
         // Determine runtime type and run import logic
         let install_path_str = target_dir.to_string_lossy().to_string();
@@ -681,7 +741,7 @@ default-character-set=utf8
                 }
                 let exe_str = exe_path.to_string_lossy().replace('\\', "/");
                 let data_str = data_path.to_string_lossy().replace('\\', "/");
-                let args = format!("server {} --console-address :9001", data_str);
+                let args = format!("server {} --address :9000 --console-address :9001", data_str);
                 let env_str = env_path.to_string_lossy().replace('\\', "/");
                 // Register the config file so it appears in the config editor.
                 let _ = self.db.upsert_config_file("minio.env", "minio.env", &env_str);
@@ -692,7 +752,7 @@ default-character-set=utf8
                 let ini_path = install_dir.join("my.ini");
                 let exe_str = exe_path.to_string_lossy().replace('\\', "/");
                 let ini_str = ini_path.to_string_lossy().replace('\\', "/");
-                let args = format!("--defaults-file={}", ini_str);
+                let args = format!("--defaults-file=\"{}\"", ini_str);
                 (exe_str, args, ini_str)
             }
             "pgsql" => {
@@ -716,6 +776,9 @@ default-character-set=utf8
 
         let exe_exists = Path::new(&exe).exists();
         info!("register_generic_service: exe={}, exists={}", exe, exe_exists);
+        if !exe_exists {
+            anyhow::bail!("安装目录缺少服务可执行文件：{}", exe);
+        }
 
         self.db.conn(|conn| {
             let now = chrono::Utc::now().to_rfc3339();
@@ -1198,7 +1261,6 @@ maxmemory 256mb
 maxmemory-policy allkeys-lru
 appendonly no
 save ""
-rdbchecksum no
 "#
     .to_string()
 }
@@ -1215,6 +1277,29 @@ MINIO_API_PORT=9000
 MINIO_CONSOLE_PORT=9001
 "#
     .to_string()
+}
+
+fn render_managed_mysql_ini(service_id: &str, install_dir: &Path) -> String {
+    let dir_str = install_dir.to_string_lossy().replace('\\', "/");
+    let port = if service_id == "mysql57" { 3307 } else { 3306 };
+    format!(
+r#"[mysql]
+default-character-set=utf8
+
+[mysqld]
+port={}
+default_authentication_plugin=mysql_native_password
+basedir="{}"
+datadir="{}/data"
+character-set-server=utf8
+default-storage-engine=InnoDB
+max_connections=200
+innodb_buffer_pool_size=64M
+
+[client]
+port={}
+default-character-set=utf8
+"#, port, dir_str, dir_str, port)
 }
 
 /// Recursively copy the contents of `src` into `dst` (preserving relative paths).
@@ -1238,6 +1323,92 @@ fn copy_dir_contents(src: &Path, dst: &Path) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+fn normalize_zip_entry_name(name: &str) -> String {
+    name.replace('\\', "/")
+}
+
+fn service_marker_path(service_id: &str) -> Option<&'static str> {
+    match service_id {
+        "nginx" => Some("nginx.exe"),
+        "apache" => Some("bin/httpd.exe"),
+        "mysql80" | "mysql57" => Some("bin/mysqld.exe"),
+        "redis" => Some("redis-server.exe"),
+        "minio" => Some("minio.exe"),
+        "pgsql" => Some("bin/pg_ctl.exe"),
+        "php" | "php73" => Some("php-cgi.exe"),
+        s if s.starts_with("php") => Some("php-cgi.exe"),
+        _ => None,
+    }
+}
+
+fn has_service_marker(root: &Path, service_id: &str) -> bool {
+    service_marker_path(service_id)
+        .map(|marker| root.join(marker).exists())
+        .unwrap_or(false)
+}
+
+fn normalize_service_root(root: &Path, service_id: &str) -> Result<()> {
+    if !root.is_dir() || service_marker_path(service_id).is_none() {
+        return Ok(());
+    }
+
+    for _ in 0..8 {
+        if has_service_marker(root, service_id) {
+            return Ok(());
+        }
+
+        let entries = fs::read_dir(root)?.collect::<std::result::Result<Vec<_>, _>>()?;
+        let has_files = entries.iter().any(|entry| entry.path().is_file());
+        let dirs = entries.iter().filter(|entry| entry.path().is_dir()).collect::<Vec<_>>();
+
+        if has_files || dirs.len() != 1 {
+            return Ok(());
+        }
+
+        let child = dirs[0].path();
+        let child_for_log = child.clone();
+        let mut staging = root.join(".winserver-flattening");
+        let mut suffix = 0u8;
+        while staging.exists() {
+            suffix += 1;
+            staging = root.join(format!(".winserver-flattening-{}", suffix));
+        }
+
+        fs::rename(&child, &staging).with_context(|| {
+            format!(
+                "failed to stage wrapper directory {} as {}",
+                child.display(),
+                staging.display()
+            )
+        })?;
+
+        let child_entries = fs::read_dir(&staging)?.collect::<std::result::Result<Vec<_>, _>>()?;
+        for entry in child_entries {
+            let source = entry.path();
+            let destination = root.join(entry.file_name());
+            if destination.exists() {
+                anyhow::bail!("无法归一运行目录，目标已存在：{}", destination.display());
+            }
+            fs::rename(&source, &destination).with_context(|| {
+                format!(
+                    "failed to move {} to {}",
+                    source.display(),
+                    destination.display()
+                )
+            })?;
+        }
+        fs::remove_dir(&staging)
+            .with_context(|| format!("failed to remove {}", staging.display()))?;
+        info!(
+            "normalize_service_root: flattened {} wrapper directory {}",
+            service_id,
+            child_for_log.display()
+        );
+    }
+
     Ok(())
 }
 
@@ -1427,5 +1598,149 @@ mod tests {
             .expect_err("missing php-cgi should fail");
 
         assert!(error.to_string().contains("php-cgi.exe"));
+    }
+
+    #[test]
+    fn register_generic_redis_creates_editable_config_and_service_row() {
+        let db = make_db();
+        let data_dir = make_data_dir();
+        let root = data_dir.join("redis-7.2.4");
+        fs::create_dir_all(&root).expect("create redis dir");
+        fs::write(root.join("redis-server.exe"), "").expect("write redis exe");
+
+        let manager = RuntimeManager::new(data_dir, db.clone());
+        manager
+            .register_generic_service("redis", "redis", &root.to_string_lossy())
+            .expect("register redis");
+
+        let conf = root.join("redis.conf");
+        assert!(conf.exists(), "redis.conf should be created when missing");
+        let service = db.get_service_config("redis").expect("redis service config");
+        assert!(service.installed);
+        assert_eq!(service.args.as_deref(), Some("redis.conf"));
+        let conf_str = conf.to_string_lossy().replace('\\', "/");
+        assert_eq!(service.config_file.as_deref(), Some(conf_str.as_str()));
+        assert!(db
+            .list_config_files()
+            .expect("config files")
+            .iter()
+            .any(|file| file.id == "redis.conf" && file.exists));
+    }
+
+    #[test]
+    fn register_generic_minio_creates_env_and_full_start_args() {
+        let db = make_db();
+        let data_dir = make_data_dir();
+        let root = data_dir.join("minio");
+        fs::create_dir_all(&root).expect("create minio dir");
+        fs::write(root.join("minio.exe"), "").expect("write minio exe");
+
+        let manager = RuntimeManager::new(data_dir, db.clone());
+        manager
+            .register_generic_service("minio", "minio", &root.to_string_lossy())
+            .expect("register minio");
+
+        let env = root.join("minio.env");
+        assert!(env.exists(), "minio.env should be created when missing");
+        let service = db.get_service_config("minio").expect("minio service config");
+        assert!(service.installed);
+        let args = service.args.unwrap_or_default();
+        let data_arg = root.join("data").to_string_lossy().replace('\\', "/");
+        assert!(args.contains(&format!("server {}", data_arg)));
+        assert!(args.contains("--address :9000"));
+        assert!(args.contains("--console-address :9001"));
+        let env_str = env.to_string_lossy().replace('\\', "/");
+        assert_eq!(service.config_file.as_deref(), Some(env_str.as_str()));
+        assert!(db
+            .list_config_files()
+            .expect("config files")
+            .iter()
+            .any(|file| file.id == "minio.env" && file.exists));
+    }
+
+    #[test]
+    fn install_bundled_runtime_flattens_nested_wrappers_and_registers_service() {
+        let db = make_db();
+        let data_dir = make_data_dir();
+        let runtime_dir = make_data_dir().join("bundles");
+        let bundled_leaf = runtime_dir.join("redis-up").join("_up").join("_up");
+        fs::create_dir_all(&bundled_leaf).expect("create nested bundled dir");
+        fs::write(bundled_leaf.join("redis-server.exe"), "").expect("write redis exe");
+        fs::write(bundled_leaf.join("redis.conf"), "port 6379\n").expect("write redis conf");
+
+        let manager = RuntimeManager::new(data_dir.clone(), db.clone());
+        let manifest = manager
+            .install_bundled_runtime("redis", &runtime_dir)
+            .expect("install redis bundled runtime");
+
+        let target = data_dir.join("server").join("redis");
+        assert!(manifest.installed);
+        assert!(target.join("redis-server.exe").exists());
+        assert!(target.join("redis.conf").exists());
+        assert!(!target.join("_up").exists());
+
+        let service = db.get_service_config("redis").expect("redis service config");
+        assert!(service.installed);
+        let target_str = target.to_string_lossy().replace('\\', "/");
+        assert_eq!(service.cwd.as_deref(), Some(target_str.as_str()));
+        assert!(db.get_software("redis").expect("redis software row").installed);
+    }
+
+    #[test]
+    fn install_bundled_minio_marks_client_tool_in_same_managed_dir() {
+        let db = make_db();
+        let data_dir = make_data_dir();
+        let runtime_dir = make_data_dir().join("bundles");
+        let bundled_minio = runtime_dir.join("minio");
+        fs::create_dir_all(&bundled_minio).expect("create minio bundle");
+        fs::write(bundled_minio.join("minio.exe"), "").expect("write minio exe");
+        fs::write(bundled_minio.join("mc.exe"), "").expect("write mc exe");
+        fs::write(bundled_minio.join("minio.env"), default_minio_env()).expect("write minio env");
+
+        let manager = RuntimeManager::new(data_dir.clone(), db.clone());
+        manager
+            .install_bundled_runtime("minio", &runtime_dir)
+            .expect("install minio bundled runtime");
+
+        let target = data_dir.join("server").join("minio");
+        let target_str = target.to_string_lossy().to_string();
+        let minio = db.get_software("minio").expect("minio software row");
+        let mc = db.get_software("mc").expect("mc software row");
+
+        assert!(target.join("minio.exe").exists());
+        assert!(target.join("mc.exe").exists());
+        assert!(minio.installed);
+        assert!(mc.installed);
+        assert_eq!(minio.install_path.as_deref(), Some(target_str.as_str()));
+        assert_eq!(mc.install_path.as_deref(), Some(target_str.as_str()));
+    }
+
+    #[test]
+    fn managed_mysql_ini_uses_current_install_dir() {
+        let install_dir = PathBuf::from(r"C:\Users\12062\Desktop\WinServer\data\server\mysql80");
+        let ini = render_managed_mysql_ini("mysql80", &install_dir);
+
+        assert!(ini.contains("port=3306"));
+        assert!(ini.contains("basedir=\"C:/Users/12062/Desktop/WinServer/data/server/mysql80\""));
+        assert!(ini.contains("datadir=\"C:/Users/12062/Desktop/WinServer/data/server/mysql80/data\""));
+        assert!(!ini.contains("phpstudy"));
+        assert!(!ini.contains("D:/"));
+    }
+
+    #[test]
+    fn register_generic_service_rejects_missing_executable() {
+        let db = make_db();
+        let data_dir = make_data_dir();
+        let root = data_dir.join("redis-missing-exe");
+        fs::create_dir_all(&root).expect("create redis dir");
+
+        let manager = RuntimeManager::new(data_dir, db.clone());
+        let error = manager
+            .register_generic_service("redis", "redis", &root.to_string_lossy())
+            .expect_err("missing redis-server.exe should fail");
+
+        assert!(error.to_string().contains("服务可执行文件"));
+        let service = db.get_service_config("redis").expect("redis service config");
+        assert!(!service.installed);
     }
 }

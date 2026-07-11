@@ -84,7 +84,6 @@ export const PAGE_KEYS: Record<string, string> = {
   sites: '\u7f51\u7ad9',
   database: '\u6570\u636e\u5e93',
   software: '\u8f6f\u4ef6',
-  files: '\u6587\u4ef6',
   logs: '\u65e5\u5fd7',
   settings: '\u8bbe\u7f6e',
 }
@@ -100,7 +99,7 @@ export async function waitForAppReady(page: Page) {
 }
 
 export async function waitForModal(page: Page, timeout = 5000) {
-  const modal = page.locator('.modal-overlay:visible, .overlay.show:visible .modal, .modal:visible')
+  const modal = page.locator('.overlay.show:visible .modal, .modal:visible')
   await modal.first().waitFor({ state: 'visible', timeout }).catch(() => null)
   return modal.first()
 }
@@ -111,7 +110,7 @@ export async function closeModal(page: Page) {
     await closeBtn.click()
     await page.waitForTimeout(300)
   } else {
-    const overlay = page.locator('.overlay.show, .modal-overlay').first()
+    const overlay = page.locator('.overlay.show').first()
     if (await overlay.isVisible().catch(() => false)) {
       await overlay.click({ position: { x: 5, y: 5 } })
       await page.waitForTimeout(300)

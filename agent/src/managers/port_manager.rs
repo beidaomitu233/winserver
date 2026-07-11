@@ -122,7 +122,7 @@ impl PortManager {
         Some(name.trim_matches('"').to_string())
     }
 
-    /// Kill a process by PID using taskkill.
+    /// Kill a process by PID using taskkill /F.
     pub fn kill_process(&self, pid: u32) -> anyhow::Result<()> {
         info!("Attempting to kill process PID {}", pid);
 

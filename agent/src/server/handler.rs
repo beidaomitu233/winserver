@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::path::Path;
 use std::io::{Read, Seek, SeekFrom};
@@ -17,6 +17,21 @@ use crate::managers::{
 struct CachedState {
     state: AppState,
     at: Instant,
+}
+
+fn prefer_bundled_runtime(software_id: &str, service_id: &str) -> bool {
+    matches!(
+        (software_id, service_id),
+        ("mysql80", "mysql80") | ("redis", "redis") | ("minio", "minio")
+    )
+}
+
+fn should_skip_local_service_registration(
+    software_id: &str,
+    service_id: &str,
+    preferred_bundled_service_ids: &HashSet<String>,
+) -> bool {
+    preferred_bundled_service_ids.contains(service_id) && !prefer_bundled_runtime(software_id, service_id)
 }
 
 pub struct RequestHandler {
@@ -80,17 +95,53 @@ impl RequestHandler {
             }
         }
 
-        // 3. Auto-install bundled runtimes for services that have no local version and are not yet installed
+        // 3. Auto-install bundled runtimes for services that have no local version and are not yet installed.
+        //    For locally-detected services, register them into the DB so they
+        //    show as installed (instead of leaving installed=0 forever).
+        let preferred_bundled_service_ids: HashSet<String> = software_list
+            .iter()
+            .filter(|sw| prefer_bundled_runtime(&sw.id, &sw.service_id))
+            .filter(|sw| self.runtime_manager.find_bundled_file(&sw.id, runtime_dir).is_some())
+            .map(|sw| sw.service_id.clone())
+            .collect();
+
         for sw in &software_list {
-            if sw.installed {
-                continue;
-            }
-            if local_services.contains_key(&sw.service_id) {
-                info!("run_auto_setup: {} has local installation at {}, skipping bundled install", sw.id, local_services[&sw.service_id]);
+            let has_bundled = self.runtime_manager.find_bundled_file(&sw.id, runtime_dir).is_some();
+            if has_bundled && prefer_bundled_runtime(&sw.id, &sw.service_id) {
+                info!("run_auto_setup: installing preferred bundled runtime for {}", sw.id);
+                if let Err(e) = self.runtime_manager.install_bundled_runtime(&sw.id, runtime_dir) {
+                    warn!("run_auto_setup: failed to install preferred bundled {}: {}", sw.id, e);
+                }
                 continue;
             }
 
-            if self.runtime_manager.find_bundled_file(&sw.id, runtime_dir).is_none() {
+            if should_skip_local_service_registration(&sw.id, &sw.service_id, &preferred_bundled_service_ids) {
+                info!(
+                    "run_auto_setup: skipping local registration for {} because service {} is managed by a preferred bundled runtime",
+                    sw.id, sw.service_id
+                );
+                continue;
+            }
+
+            if sw.installed {
+                if matches!(sw.service_id.as_str(), "redis" | "minio") {
+                    if let Some(install_path) = sw.install_path.as_deref().filter(|path| !path.trim().is_empty()) {
+                        if let Err(e) = self.runtime_manager.register_detected_service(&sw.id, &sw.service_id, install_path) {
+                            warn!("run_auto_setup: failed to repair registered {}: {}", sw.id, e);
+                        }
+                    }
+                }
+                continue;
+            }
+            if let Some(install_path) = local_services.get(&sw.service_id) {
+                info!("run_auto_setup: {} found locally at {}, registering as installed", sw.id, install_path);
+                if let Err(e) = self.runtime_manager.register_detected_service(&sw.id, &sw.service_id, install_path) {
+                    warn!("run_auto_setup: failed to register local {}: {}", sw.id, e);
+                }
+                continue;
+            }
+
+            if !has_bundled {
                 continue;
             }
 
@@ -162,7 +213,6 @@ impl RequestHandler {
             "software.installBundled" => self.handle_software_install_bundled(&params).await,
             "software.detectLocal" => self.handle_software_detect_local().await,
             "service.toggleAuto" => self.handle_service_toggle_auto(&params).await,
-            "files.list" => self.handle_files_list(&params).await,
             _ => {
                 warn!("Unknown method: {}", method);
                 return JsonRpcResponse::error_with_data(
@@ -522,6 +572,20 @@ impl RequestHandler {
         }
 
         std::fs::write(&path, content)?;
+
+        if file_id == "redis.conf" {
+            let parsed = parse_redis_conf(content, &path);
+            if let Some(port) = parsed.get("port").and_then(|value| value.as_u64()) {
+                let _ = self.db.update_service_port("redis", port as u16);
+            }
+            let _ = self.db.add_log("config.save", "redis", true, "redis.conf 已通过文件编辑更新");
+        } else if file_id == "minio.env" {
+            let parsed = parse_minio_env(content, &path);
+            if let Some(port) = parsed.get("api_port").and_then(|value| value.as_u64()) {
+                let _ = self.db.update_service_port("minio", port as u16);
+            }
+            let _ = self.db.add_log("config.save", "minio", true, "minio.env 已通过文件编辑更新");
+        }
 
         let state = self.build_app_state().await?;
         Ok(json!({ "state": state, "message": "配置已保存" }))
@@ -1006,11 +1070,20 @@ impl RequestHandler {
             runtime_manager.detect_local_services()
         }).await?;
 
+        for sw in self.db.list_software()? {
+            if let Some(path) = found.get(&sw.service_id) {
+                if let Err(e) = self.runtime_manager.register_detected_service(&sw.id, &sw.service_id, path) {
+                    warn!("software.detectLocal: failed to register {} from {}: {}", sw.id, path, e);
+                }
+            }
+        }
+
         let local_map: serde_json::Value = found.into_iter()
             .map(|(k, v)| (k, json!(v)))
             .collect();
+        let state = self.build_app_state().await?;
 
-        Ok(json!({ "localServices": local_map }))
+        Ok(json!({ "localServices": local_map, "state": state }))
     }
 
     async fn handle_software_uninstall(&self, params: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
@@ -1293,26 +1366,6 @@ impl RequestHandler {
         Ok(json!({ "ok": true, "db": db_name }))
     }
 
-    async fn handle_files_list(&self, params: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
-        let dir_path = params["path"].as_str().ok_or_else(|| anyhow::anyhow!("缺少 path"))?;
-        let dir = std::path::Path::new(dir_path);
-        if !dir.exists() || !dir.is_dir() {
-            anyhow::bail!("目录不存在：{}", dir_path);
-        }
-        let mut entries = Vec::new();
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let metadata = entry.metadata()?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            entries.push(json!({
-                "name": name,
-                "isDir": metadata.is_dir(),
-                "size": metadata.len(),
-                "modifiedAt": metadata.modified().ok().map(|t| format!("{:?}", t)).unwrap_or_default()
-            }));
-        }
-        Ok(json!({ "entries": entries }))
-    }
 }
 
 fn classify_error(message: &str) -> (i32, &'static str) {
@@ -1565,9 +1618,11 @@ fn read_log_tail(path: &Path, search: &str, max_bytes: u64) -> anyhow::Result<Ve
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_error, ensure_child_file, quote_mysql_ident, quote_mysql_string, read_log_tail,
-        redact_secret, validate_mysql_identifier,
+        classify_error, ensure_child_file, parse_minio_env, parse_redis_conf, quote_mysql_ident,
+        quote_mysql_string, read_log_tail, redact_secret, render_minio_env, render_redis_conf,
+        should_skip_local_service_registration, validate_mysql_identifier, prefer_bundled_runtime,
     };
+    use std::collections::HashSet;
     use std::fs;
     use uuid::Uuid;
 
@@ -1587,6 +1642,24 @@ mod tests {
 
         let missing = read_log_tail(&path.with_extension("missing"), "", 128).expect("missing log");
         assert!(missing[0].contains("日志文件不存在"));
+    }
+
+    #[test]
+    fn core_services_prefer_packaged_bundles_over_external_dirs() {
+        assert!(prefer_bundled_runtime("mysql80", "mysql80"));
+        assert!(prefer_bundled_runtime("redis", "redis"));
+        assert!(prefer_bundled_runtime("minio", "minio"));
+        assert!(!prefer_bundled_runtime("mysql57", "mysql57"));
+        assert!(!prefer_bundled_runtime("nginx", "nginx"));
+    }
+
+    #[test]
+    fn auxiliary_software_does_not_override_preferred_bundled_service() {
+        let preferred = HashSet::from(["minio".to_string()]);
+
+        assert!(should_skip_local_service_registration("mc", "minio", &preferred));
+        assert!(!should_skip_local_service_registration("minio", "minio", &preferred));
+        assert!(!should_skip_local_service_registration("redis", "redis", &preferred));
     }
 
     #[test]
@@ -1618,5 +1691,39 @@ mod tests {
 
         assert!(ensure_child_file(&backups, &inside, "备份文件").is_ok());
         assert!(ensure_child_file(&backups, &outside, "备份文件").is_err());
+    }
+
+    #[test]
+    fn redis_visual_config_parse_and_render_roundtrip() {
+        let raw = "port 6380\nbind 127.0.0.1\nrequirepass secret\nappendonly yes\nprotected-mode no\nmaxmemory 512mb\nmaxmemory-policy noeviction\n";
+        let parsed = parse_redis_conf(raw, "redis.conf");
+
+        assert_eq!(parsed["port"], 6380);
+        assert_eq!(parsed["password"], "secret");
+        assert_eq!(parsed["appendonly"], true);
+        assert_eq!(parsed["protected_mode"], false);
+
+        let rendered = render_redis_conf(6381, "0.0.0.0", "", "256mb", "allkeys-lru", false, true);
+        assert!(rendered.contains("port 6381"));
+        assert!(rendered.contains("bind 0.0.0.0"));
+        assert!(rendered.contains("# requirepass disabled"));
+        assert!(rendered.contains("protected-mode yes"));
+    }
+
+    #[test]
+    fn minio_visual_config_parse_and_render_roundtrip() {
+        let raw = "MINIO_ROOT_USER=\"root\"\nMINIO_ROOT_PASSWORD=\"pass\"\nMINIO_API_PORT=9010\nMINIO_CONSOLE_PORT=9011\n";
+        let parsed = parse_minio_env(raw, "minio.env");
+
+        assert_eq!(parsed["root_user"], "root");
+        assert_eq!(parsed["root_password"], "pass");
+        assert_eq!(parsed["api_port"], 9010);
+        assert_eq!(parsed["console_port"], 9011);
+
+        let rendered = render_minio_env("admin", "secret", 9000, 9001);
+        assert!(rendered.contains("MINIO_ROOT_USER=admin"));
+        assert!(rendered.contains("MINIO_ROOT_PASSWORD=secret"));
+        assert!(rendered.contains("MINIO_API_PORT=9000"));
+        assert!(rendered.contains("MINIO_CONSOLE_PORT=9001"));
     }
 }

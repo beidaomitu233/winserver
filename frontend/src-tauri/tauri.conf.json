@@ -18,8 +18,8 @@
         "minWidth": 1180,
         "minHeight": 720,
         "resizable": true,
-        "fullscreen": false,
-        "decorations": false
+        "decorations": false,
+        "fullscreen": false
       }
     ],
     "security": {
@@ -41,7 +41,12 @@
       "../../runtime/mysql-8.0.12-winx64.zip",
       "../../runtime/redis-7.2.4/redis-server.exe",
       "../../runtime/redis-7.2.4/redis-cli.exe",
-      "../../runtime/minio/minio.exe"
+      "../../runtime/redis-7.2.4/redis.conf",
+      "../../runtime/redis-7.2.4/run.bat",
+      "../../runtime/minio/minio.exe",
+      "../../runtime/minio/mc.exe",
+      "../../runtime/minio/minio.env",
+      "../../runtime/minio/run.bat"
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"

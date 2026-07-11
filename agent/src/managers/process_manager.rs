@@ -42,6 +42,74 @@ fn shell_words(s: &str) -> Vec<String> {
     words
 }
 
+fn service_config_path(config_file: &Option<String>, cwd: &str, fallback_name: &str) -> Option<PathBuf> {
+    config_file
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            let fallback = PathBuf::from(cwd).join(fallback_name);
+            if fallback.exists() {
+                Some(fallback)
+            } else {
+                None
+            }
+        })
+}
+
+fn parse_port(value: &str) -> Option<u16> {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .parse::<u16>()
+        .ok()
+        .filter(|port| *port > 0)
+}
+
+fn parse_redis_port(path: &Path) -> Option<u16> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    raw.lines().find_map(|line| {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            return None;
+        }
+        let mut parts = line.split_whitespace();
+        let key = parts.next()?;
+        if key.eq_ignore_ascii_case("port") {
+            parts.next().and_then(parse_port)
+        } else {
+            None
+        }
+    })
+}
+
+fn parse_env_file(path: &Path) -> HashMap<String, String> {
+    let mut values = HashMap::new();
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return values;
+    };
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            continue;
+        }
+        let value = value.trim().trim_matches('"').trim_matches('\'').to_string();
+        values.insert(key.to_string(), value);
+    }
+
+    values
+}
+
 /// A tracked child process entry.
 #[derive(Debug, Clone)]
 pub struct ProcessEntry {
@@ -54,6 +122,7 @@ pub struct ProcessEntry {
 pub struct ProcessManager {
     processes: Arc<Mutex<HashMap<String, ProcessEntry>>>,
     db: Arc<Database>,
+    #[allow(dead_code)]
     port_manager: Arc<super::PortManager>,
     health_monitor_running: Arc<std::sync::atomic::AtomicBool>,
     shutdown_signal: Arc<tokio::sync::Notify>,
@@ -131,7 +200,7 @@ impl ProcessManager {
     }
 
     /// Reconcile process tracking on startup by verifying PIDs in the database
-    /// are still running. Updates stale entries to stopped state.
+    /// are still running, re-tracking alive processes, and updating stale entries.
     pub async fn reconcile_process_tracking(&self) -> Result<()> {
         info!("Reconciling process tracking on startup");
 
@@ -208,35 +277,91 @@ impl ProcessManager {
         }
 
         let exe = config.exe.clone();
-        let args: Vec<String> = config
+        let mut args: Vec<String> = config
             .args
             .as_deref()
             .map(|s| shell_words(s))
             .unwrap_or_default();
+        let mut port = config.port;
         let cwd = config.cwd.clone().unwrap_or_else(|| {
             PathBuf::from(&exe)
                 .parent()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| ".".to_string())
         });
-        let env_extra = config.env.unwrap_or_default();
+        let mut env_extra = config.env.unwrap_or_default();
 
         // Verify executable exists
         if !Path::new(&exe).exists() {
             anyhow::bail!("可执行文件不存在：{}", exe);
         }
 
-        if config.port > 0 && Self::is_port_listening(config.port) {
-            // Check if the port is occupied and get process info
-            let port_result = self.port_manager.check_port(config.port);
+        if service_id == "redis" {
+            // Ensure a default redis.conf exists in the cwd
+            let default_conf = PathBuf::from(&cwd).join("redis.conf");
+            if !default_conf.exists() {
+                let default_config = r#"# Redis configuration (managed by WinServer)
+port 6379
+bind 127.0.0.1
+protected-mode yes
+maxmemory 256mb
+maxmemory-policy allkeys-lru
+appendonly no
+save ""
+"#;
+                let _ = std::fs::write(&default_conf, default_config);
+                info!("Created default redis.conf at {}", default_conf.display());
+            }
+            if let Some(conf_path) = service_config_path(&config.config_file, &cwd, "redis.conf") {
+                if let Some(config_port) = parse_redis_port(&conf_path) {
+                    port = config_port;
+                    let _ = self.db.update_service_port(service_id, port);
+                }
+                args = vec![conf_path.to_string_lossy().to_string()];
+            }
+        } else if service_id == "minio" {
+            let env_path = service_config_path(&config.config_file, &cwd, "minio.env");
+            let minio_env = env_path
+                .as_deref()
+                .map(parse_env_file)
+                .unwrap_or_default();
+            for (key, value) in &minio_env {
+                env_extra.insert(key.clone(), value.clone());
+            }
+            if let Some(path) = env_path {
+                env_extra.insert("MINIO_CONFIG_ENV_FILE".to_string(), path.to_string_lossy().to_string());
+            }
+            let api_port = minio_env
+                .get("MINIO_API_PORT")
+                .and_then(|value| parse_port(value))
+                .unwrap_or(port);
+            let console_port = minio_env
+                .get("MINIO_CONSOLE_PORT")
+                .and_then(|value| parse_port(value))
+                .unwrap_or(9001);
+            port = api_port;
+            let _ = self.db.update_service_port(service_id, port);
+            let data_dir = PathBuf::from(&cwd).join("data");
+            let _ = std::fs::create_dir_all(&data_dir);
+            args = vec![
+                "server".to_string(),
+                data_dir.to_string_lossy().to_string(),
+                "--address".to_string(),
+                format!(":{}", api_port),
+                "--console-address".to_string(),
+                format!(":{}", console_port),
+            ];
+        }
+
+        if port > 0 && Self::is_port_listening(port) {
+            let port_result = self.port_manager.check_port(port);
             if let (Some(pid), Some(process_name)) = (port_result.pid, port_result.process_name) {
                 anyhow::bail!(
                     "端口 {} 已被占用（进程: {} PID: {}），无法启动 {}",
-                    config.port, process_name, pid, service_id
+                    port, process_name, pid, service_id
                 );
-            } else {
-                anyhow::bail!("端口 {} 已被占用，无法启动 {}", config.port, service_id);
             }
+            anyhow::bail!("端口 {} 已被占用，无法启动 {}", port, service_id);
         }
 
         // Auto-start PHP-CGI when Nginx or Apache starts
@@ -247,12 +372,24 @@ impl ProcessManager {
         // Spawn the process
         info!("Starting service {}: {} {:?}", service_id, exe, args);
 
+        // For Redis, capture stderr to a log file for diagnostics
+        let stderr_target = if service_id == "redis" {
+            let log_dir = PathBuf::from(&cwd).join("logs");
+            let _ = std::fs::create_dir_all(&log_dir);
+            let log_file = log_dir.join("redis-stderr.log");
+            std::fs::File::create(&log_file)
+                .map(std::process::Stdio::from)
+                .unwrap_or(std::process::Stdio::null())
+        } else {
+            std::process::Stdio::null()
+        };
+
         let mut cmd = std::process::Command::new(&exe);
         cmd.args(&args)
             .current_dir(&cwd)
             .envs(&env_extra)
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stderr(stderr_target);
 
         // On Windows, use CREATE_NO_WINDOW + DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP
         // to prevent console windows from appearing on screen.
@@ -286,12 +423,74 @@ impl ProcessManager {
         }
 
         let ready = self
-            .wait_for_service_ready(pid, config.port, Duration::from_secs(8))
+            .wait_for_service_ready(pid, port, Duration::from_secs(8))
             .await;
         if let Err(error) = ready {
             let _ = self.kill_process_tree(pid).await;
-            let mut processes = self.processes.lock().await;
-            processes.remove(service_id);
+            {
+                let mut processes = self.processes.lock().await;
+                processes.remove(service_id);
+            }
+            // For Redis, retry once without a config file
+            if service_id == "redis" && !args.is_empty() {
+                let stderr_content = std::fs::read_to_string(
+                    PathBuf::from(&cwd).join("logs").join("redis-stderr.log")
+                ).unwrap_or_default();
+                warn!("Redis first attempt failed (PID {}): {}. Stderr: {}", pid, error, stderr_content);
+                info!("Redis retrying without config file...");
+                let mut retry_cmd = std::process::Command::new(&exe);
+                retry_cmd.args(Vec::<String>::new())
+                    .current_dir(&cwd)
+                    .envs(&env_extra)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x08000000;
+                    const DETACHED_PROCESS: u32 = 0x00000008;
+                    const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+                    retry_cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+                }
+                match retry_cmd.spawn() {
+                    Ok(retry_child) => {
+                        let retry_pid = retry_child.id();
+                        info!("Redis retry started with PID {}", retry_pid);
+                        {
+                            let mut processes = self.processes.lock().await;
+                            processes.insert(
+                                service_id.to_string(),
+                                ProcessEntry {
+                                    pid: retry_pid,
+                                    service_id: service_id.to_string(),
+                                    exe: exe.clone(),
+                                },
+                            );
+                        }
+                        let retry_ready = self
+                            .wait_for_service_ready(retry_pid, port, Duration::from_secs(8))
+                            .await;
+                        if let Err(retry_error) = retry_ready {
+                            let _ = self.kill_process_tree(retry_pid).await;
+                            let mut processes = self.processes.lock().await;
+                            processes.remove(service_id);
+                            anyhow::bail!("Redis 启动失败（首次尝试+无配置重试均未成功）: {}", retry_error);
+                        }
+                        self.db
+                            .update_service_state(service_id, ServiceState::Running, Some(retry_pid))?;
+                        self.db.add_log(
+                            "service.start",
+                            service_id,
+                            true,
+                            &format!("服务已启动（无配置模式），PID {}，端口 {}", retry_pid, port),
+                        )?;
+                        return Ok(());
+                    }
+                    Err(spawn_err) => {
+                        anyhow::bail!("Redis 启动失败（无法重试）: {}", spawn_err);
+                    }
+                }
+            }
             anyhow::bail!("{}", error);
         }
 
@@ -302,7 +501,7 @@ impl ProcessManager {
             "service.start",
             service_id,
             true,
-            &format!("服务已启动，PID {}，端口 {}", pid, config.port),
+            &format!("服务已启动，PID {}，端口 {}", pid, port),
         )?;
 
         Ok(())
@@ -755,6 +954,59 @@ mod tests {
             .expect("test service")
     }
 
+    #[test]
+    fn parse_redis_port_uses_uncommented_port() {
+        let dir = std::env::temp_dir().join(format!("winserver-redis-conf-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create redis conf dir");
+        let conf = dir.join("redis.conf");
+        fs::write(
+            &conf,
+            "# port 6379\n\nbind 127.0.0.1\nport 6388\nprotected-mode yes\n",
+        )
+        .expect("write redis conf");
+
+        assert_eq!(parse_redis_port(&conf), Some(6388));
+    }
+
+    #[test]
+    fn parse_env_file_strips_quotes_and_ignores_comments() {
+        let dir = std::env::temp_dir().join(format!("winserver-minio-env-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create minio env dir");
+        let env = dir.join("minio.env");
+        fs::write(
+            &env,
+            "# comment\nMINIO_ROOT_USER=\"admin\"\nMINIO_ROOT_PASSWORD='secret'\nMINIO_API_PORT=9010\n",
+        )
+        .expect("write minio env");
+
+        let parsed = parse_env_file(&env);
+        assert_eq!(parsed.get("MINIO_ROOT_USER").map(String::as_str), Some("admin"));
+        assert_eq!(parsed.get("MINIO_ROOT_PASSWORD").map(String::as_str), Some("secret"));
+        assert_eq!(parsed.get("MINIO_API_PORT").map(String::as_str), Some("9010"));
+    }
+
+    #[test]
+    fn service_config_path_prefers_db_path_then_existing_fallback() {
+        let dir = std::env::temp_dir().join(format!("winserver-config-path-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).expect("create service dir");
+        let fallback = dir.join("redis.conf");
+        fs::write(&fallback, "port 6379\n").expect("write fallback");
+        let explicit = dir.join("custom.conf");
+
+        assert_eq!(
+            service_config_path(&Some(explicit.to_string_lossy().to_string()), &dir.to_string_lossy(), "redis.conf"),
+            Some(explicit)
+        );
+        assert_eq!(
+            service_config_path(&None, &dir.to_string_lossy(), "redis.conf"),
+            Some(fallback)
+        );
+    }
+
+    fn make_process_manager(db: Arc<Database>) -> ProcessManager {
+        ProcessManager::new(db, Arc::new(super::super::PortManager::new()))
+    }
+
     #[tokio::test]
     async fn start_and_stop_service_verifies_pid_and_port() {
         let Some(node) = node_exe() else {
@@ -768,7 +1020,7 @@ mod tests {
         let args = format!("\"{}\"", script.to_string_lossy());
         insert_test_service(&db, "test-listener", &node, &args, &dir, port);
 
-        let manager = ProcessManager::new(db.clone());
+        let manager = make_process_manager(db.clone());
         manager
             .start_service("test-listener")
             .await
@@ -807,7 +1059,7 @@ mod tests {
         let args = format!("\"{}\"", script.to_string_lossy());
         insert_test_service(&db, "test-conflict", &node, &args, &dir, port);
 
-        let manager = ProcessManager::new(db.clone());
+        let manager = make_process_manager(db.clone());
         let error = manager
             .start_service("test-conflict")
             .await

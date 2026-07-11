@@ -9,6 +9,7 @@
                     "tauri:dev":  "cd frontend \u0026\u0026 npm run tauri dev",
                     "tauri:build":  "cd frontend \u0026\u0026 npm run tauri build",
                     "test":  "node tests/run-all.js",
+                    "test:resources":  "node tests/verify-runtime-resources.js",
                     "test:backend":  "cargo test --test api_integration -- --nocapture",
                     "test:unit":  "cargo test --lib -- --nocapture",
                     "test:e2e":  "npx playwright test",
