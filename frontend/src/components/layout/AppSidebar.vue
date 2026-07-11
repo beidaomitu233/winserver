@@ -39,9 +39,6 @@ const diskPercent = computed(() => Math.max(0, Math.min(100, Math.round(systemRe
     </nav>
 
     <nav class="nav-list">
-      <button class="nav-item" data-action="open-terminal">
-        <svg class="icon"><use href="#i-terminal"></use></svg><span>终端</span>
-      </button>
       <button class="nav-item" :class="{ active: currentPage === 'settings' }" @click="currentPage = 'settings'">
         <svg class="icon"><use href="#i-settings"></use></svg><span>设置</span>
       </button>
@@ -59,3 +56,11 @@ const diskPercent = computed(() => Math.max(0, Math.min(100, Math.round(systemRe
     </div>
   </aside>
 </template>
+
+<style scoped>
+/* Match homepage app-card visual density */
+.mini-monitor {
+  min-height: 132px;
+  box-sizing: border-box;
+}
+</style>

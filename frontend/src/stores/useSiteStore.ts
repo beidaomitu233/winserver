@@ -27,9 +27,15 @@ export const useSiteStore = defineStore('sites', () => {
 
   async function createSite(domain: string, port: number, path: string, server: string, phpRuntimeId?: string) {
     try {
-      const result = await invoke<{ state: AppState }>('site_create', { domain, port, path, server, phpRuntimeId })
+      const result = await invoke<{ state: AppState }>('site_create', {
+        domain,
+        port,
+        path,
+        server,
+        phpRuntimeId: phpRuntimeId || null,
+      })
       if (result.state) sites.value = result.state.sites
-      show('站点已创建', `${domain}:${port} 已通过健康检查`, 'success')
+      show('站点已创建', `http://127.0.0.1:${port} 已通过健康检查`, 'success')
     } catch (e) {
       show('创建站点失败', readableError(e), 'error')
       throw e

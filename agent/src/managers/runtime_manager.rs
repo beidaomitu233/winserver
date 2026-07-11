@@ -30,6 +30,38 @@ impl RuntimeManager {
         }
     }
 
+    /// Import a local MySQL installation directory (contains bin/mysqld.exe).
+    pub fn import_mysql_service(
+        &self,
+        software_id: &str,
+        service_id: &str,
+        install_path: &str,
+    ) -> Result<()> {
+        let root = PathBuf::from(install_path);
+        if !root.is_dir() {
+            anyhow::bail!("MySQL 安装目录不存在：{}", install_path);
+        }
+        let mysqld = root.join("bin").join("mysqld.exe");
+        if !mysqld.is_file() {
+            anyhow::bail!("目录中未找到 bin/mysqld.exe：{}", install_path);
+        }
+        // Write managed my.ini + initialize data if needed
+        self.initialize_mysql_if_needed(service_id, &root)?;
+        self.register_generic_service(software_id, service_id, install_path)?;
+        self.db.update_software_installed(software_id, true)?;
+        self.db
+            .update_software_status(software_id, "installed")
+            .ok();
+        let _ = self.db.update_service_port(service_id, 3306);
+        self.db.add_log(
+            "runtime.import",
+            service_id,
+            true,
+            &format!("导入 MySQL {} → {}", service_id, install_path),
+        )?;
+        Ok(())
+    }
+
     /// List all installed runtimes by scanning the runtimes directory.
     pub fn list_runtimes(&self) -> Result<Vec<RuntimeManifest>> {
         let imported = self.db.list_runtimes()?;
@@ -193,16 +225,14 @@ impl RuntimeManager {
                     }
                 }
                 None => {
-                    info!("install_bundled_runtime: no bundled file found for {}, skipping", software_id);
-                    return Ok(RuntimeManifest {
-                        id: software_id.to_string(),
-                        runtime_type: RuntimeType::Nginx,
-                        version: "unknown".to_string(),
-                        install_path: String::new(),
-                        entrypoint: String::new(),
-                        config_template: None,
-                        installed: false,
-                    });
+                    // Fail loudly so the UI doesn't pretend the install succeeded.
+                    let hint = match software_id {
+                        "mysql57" => "当前安装包未内置 MySQL 5.7，请使用「导入」选择本机 MySQL 5.7 目录，或安装 MySQL 8.0。",
+                        "php73" | "php" => "当前安装包未内置 PHP，请使用「导入」选择本机 PHP 目录。",
+                        "apache" | "pgsql" => "当前安装包未内置该软件，请使用「导入」选择本机安装目录。",
+                        _ => "未找到内置安装包，请使用「导入」或在线安装。",
+                    };
+                    anyhow::bail!("无法安装 {}：{}", software_id, hint);
                 }
             }
         }
@@ -475,7 +505,7 @@ impl RuntimeManager {
         Ok(())
     }
 
-    /// Download and install software from its download_url.
+    /// Download and install software from its download_url (or built-in catalog).
     /// Progress is tracked via the shared atomic counters.
     pub fn download_install(
         &self,
@@ -484,10 +514,16 @@ impl RuntimeManager {
     ) -> Result<RuntimeManifest> {
         info!("download_install: start software_id={}", software_id);
         let sw = self.db.get_software(software_id)?;
-        let download_url = sw.download_url.as_deref().unwrap_or("");
-        if download_url.is_empty() {
+        let mut download_url = sw.download_url.clone().unwrap_or_default();
+        if download_url.trim().is_empty() {
+            if let Some(catalog) = catalog_download_url(software_id) {
+                download_url = catalog.to_string();
+            }
+        }
+        if download_url.trim().is_empty() {
             anyhow::bail!("software {} has no download_url", software_id);
         }
+        let download_url = download_url.as_str();
 
         info!("download_install: url={}, service_id={}, category={}", download_url, sw.service_id, sw.category);
 
@@ -544,9 +580,15 @@ impl RuntimeManager {
         temp_file: &Path,
         progress: &DownloadProgress,
     ) -> Result<RuntimeManifest> {
-        // Download
+        // Download (follow redirects; many mirror CDNs omit Content-Length)
         info!("do_download_and_install: requesting {}", download_url);
-        let mut response = reqwest::blocking::Client::new()
+        let client = reqwest::blocking::Client::builder()
+            .user_agent("WinServer/0.2 (Windows)")
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .timeout(std::time::Duration::from_secs(600))
+            .build()
+            .context("failed to build download client")?;
+        let mut response = client
             .get(download_url)
             .send()
             .context("download request failed")?;
@@ -556,20 +598,35 @@ impl RuntimeManager {
         }
         let total_size: u64 = response.content_length().unwrap_or(0);
         info!("do_download_and_install: HTTP {}, content_length={}", status, total_size);
-        progress.set_total(total_size);
+        // When length is unknown, seed a non-zero total so UI doesn't stick at 0%.
+        if total_size > 0 {
+            progress.set_total(total_size);
+        } else {
+            progress.set_total(1);
+        }
 
         let mut file = fs::File::create(temp_file).context("failed to create temp file")?;
         let mut downloaded: u64 = 0;
-        let mut buffer = [0u8; 8192];
+        let mut buffer = [0u8; 64 * 1024];
 
         loop {
             let bytes_read = response.read(&mut buffer)?;
-            if bytes_read == 0 { break; }
+            if bytes_read == 0 {
+                break;
+            }
             file.write_all(&buffer[..bytes_read])?;
             downloaded += bytes_read as u64;
             progress.set_downloaded(downloaded);
+            // Grow synthetic total slightly ahead of downloaded for unknown lengths.
+            if total_size == 0 {
+                let synthetic = downloaded.saturating_add(downloaded / 5).max(downloaded + 1);
+                progress.set_total(synthetic);
+            }
         }
         drop(file);
+        if total_size == 0 && downloaded > 0 {
+            progress.set_total(downloaded);
+        }
 
         info!("do_download_and_install: downloaded {} bytes to {}", downloaded, temp_file.display());
 
@@ -659,14 +716,20 @@ impl RuntimeManager {
                 // For non-nginx/php, just register the service path
                 info!("do_download_and_install: registering generic service software_id={}, service_id={}", software_id, service_id);
                 self.register_generic_service(software_id, service_id, &install_path_str)?;
+                if service_id.starts_with("mysql") {
+                    self.initialize_mysql_if_needed(service_id, target_dir)?;
+                    let _ = self.db.update_service_port(service_id, 3306);
+                }
                 self.db.update_software_download_installed(software_id, &install_path_str)?;
+                self.update_bundled_companion_software(software_id, target_dir, &install_path_str);
                 self.db.add_log("software.download_install", software_id, true, &format!("online install {} complete", software_id))?;
                 info!("do_download_and_install: generic service install complete for {}", software_id);
+                progress.set_phase("done");
 
                 return Ok(RuntimeManifest {
                     id: software_id.to_string(),
-                    runtime_type: RuntimeType::Nginx,
-                    version: "unknown".to_string(),
+                    runtime_type: RuntimeType::Mysql,
+                    version: service_id.to_string(),
                     install_path: install_path_str,
                     entrypoint: String::new(),
                     config_template: None,
@@ -752,7 +815,14 @@ impl RuntimeManager {
                 let ini_path = install_dir.join("my.ini");
                 let exe_str = exe_path.to_string_lossy().replace('\\', "/");
                 let ini_str = ini_path.to_string_lossy().replace('\\', "/");
-                let args = format!("--defaults-file=\"{}\"", ini_str);
+                // No shell quoting — CreateProcess receives args literally.
+                // process_manager also rebuilds this arg on start for safety.
+                let args = format!("--defaults-file={}", ini_path.to_string_lossy());
+                // Register under both ids so config editor finds MySQL configs.
+                let _ = self.db.upsert_config_file("mysql.ini", "MySQL my.ini", &ini_str);
+                let _ = self.db.upsert_config_file("my.ini", "my.ini", &ini_str);
+                // Always 3306 — MySQL versions are mutually exclusive.
+                let _ = self.db.update_service_port(service_id, 3306);
                 (exe_str, args, ini_str)
             }
             "pgsql" => {
@@ -1151,32 +1221,12 @@ fn ensure_file(path: &Path, label: &str) -> Result<()> {
 /// We use this for every helper subprocess (version probes, `where`, mysqld
 /// initialization) so that service setup is fully silent.
 fn silent_command(program: &str) -> std::process::Command {
-    let mut cmd = std::process::Command::new(program);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        const DETACHED_PROCESS: u32 = 0x00000008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-    }
-    let _ = &mut cmd; // silence unused-mut on non-windows
-    cmd
+    crate::process_util::silent_command(program)
 }
 
 /// Build a silent `Command` from a `Path` (overload for `&Path` exe paths).
 fn silent_command_path(exe: &Path) -> std::process::Command {
-    let mut cmd = std::process::Command::new(exe);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        const DETACHED_PROCESS: u32 = 0x00000008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-    }
-    let _ = &mut cmd;
-    cmd
+    crate::process_util::silent_command_path(exe)
 }
 
 fn run_version_command(exe: &Path, args: &[&str]) -> Result<String> {
@@ -1279,9 +1329,33 @@ MINIO_CONSOLE_PORT=9001
     .to_string()
 }
 
+/// Built-in download catalog for one-click install when no package is bundled.
+pub fn catalog_download_url(software_id: &str) -> Option<&'static str> {
+    match software_id {
+        // Official PHP NTS builds (Windows)
+        "php73" | "php" => {
+            Some("https://windows.php.net/downloads/releases/archives/php-7.3.33-nts-Win32-VC15-x64.zip")
+        }
+        // MySQL 5.7 community zip (fallback when not bundled)
+        // Prefer a direct archive URL; CDN may require following redirects.
+        "mysql57" => {
+            Some("https://cdn.mysql.com/archives/mysql-5.7/mysql-5.7.44-winx64.zip")
+        }
+        // MinIO single binary (if local bundle missing)
+        "minio" => Some("https://dl.min.io/server/minio/release/windows-amd64/minio.exe"),
+        // Redis Windows (Memurai-free community ports vary; prefer bundled)
+        "redis" => None,
+        "nginx" | "mysql80" => None, // prefer bundled
+        "apache" | "pgsql" | "mc" => None,
+        _ => None,
+    }
+}
+
 fn render_managed_mysql_ini(service_id: &str, install_dir: &Path) -> String {
     let dir_str = install_dir.to_string_lossy().replace('\\', "/");
-    let port = if service_id == "mysql57" { 3307 } else { 3306 };
+    // All managed MySQL versions share 3306 — only one should run at a time.
+    let _ = service_id;
+    let port = 3306u16;
     format!(
 r#"[mysql]
 default-character-set=utf8

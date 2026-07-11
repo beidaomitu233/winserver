@@ -5,7 +5,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import AppIcons from './components/AppIcons.vue'
 import InitSplash from './components/InitSplash.vue'
 import AppSidebar from './components/layout/AppSidebar.vue'
-import AppStatusbar from './components/layout/AppStatusbar.vue'
+
 import ConfigEditorModal from './components/modals/ConfigEditorModal.vue'
 import ServiceConfigModal from './components/modals/ServiceConfigModal.vue'
 import PortCheckModal from './components/modals/PortCheckModal.vue'
@@ -234,7 +234,6 @@ function toastIcon(type: Toast['type']) {
         <LogsPage v-else-if="currentPage === 'logs'" />
         <SettingsPage v-else-if="currentPage === 'settings'" />
       </section>
-      <AppStatusbar v-if="currentPage !== 'dashboard'" />
     </main>
   </div>
 

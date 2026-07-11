@@ -214,15 +214,18 @@
     .sidebar-spacer { flex: 1; }
     .mini-monitor {
       border: 1px solid var(--line);
-      border-radius: 16px;
+      border-radius: 12px;
       background: var(--surface-solid);
-      padding: 14px;
+      padding: 12px;
       box-shadow: var(--shadow-sm);
+      min-height: 132px;
+      box-sizing: border-box;
     }
-    .mini-monitor-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
-    .mini-monitor-title { display: flex; align-items: center; gap: 8px; font-weight: 650; }
+    .mini-monitor-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .mini-monitor-title { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 13px; }
     .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 5px rgba(39,190,107,.10); }
-    .mini-row { display: grid; grid-template-columns: 34px 1fr 32px; align-items: center; gap: 8px; margin: 10px 0; color: var(--text-2); font-size: 12px; }
+    .mini-row { display: grid; grid-template-columns: 34px 1fr 32px; align-items: center; gap: 8px; margin: 8px 0; color: var(--text-2); font-size: 12px; }
+    .mini-row:last-child { margin-bottom: 0; }
     .bar { height: 5px; background: var(--surface-soft); border-radius: 999px; overflow: hidden; }
     .bar > i { display: block; height: 100%; border-radius: inherit; background: var(--primary); }
     .bar.green > i { background: var(--success); }
@@ -234,7 +237,8 @@
       min-height: 0;
       display: grid;
       position: relative;
-      grid-template-rows: 1fr 48px;
+      /* statusbar removed — single row fills the window */
+      grid-template-rows: 1fr;
       background: var(--bg);
     }
 
@@ -321,9 +325,16 @@
 
     .content {
       min-height: 0;
+      height: 100%;
       overflow: auto;
-      padding: calc(var(--chrome-height) + 10px) 20px 26px;
+      padding: calc(var(--chrome-height) + 10px) 20px 14px;
       background: var(--bg);
+      display: block;
+    }
+    /* Dashboard: at least fill the viewport; grow with content and scroll if needed */
+    .content > .panel-home {
+      min-height: 100%;
+      height: auto;
     }
 
     .statusbar {
@@ -560,10 +571,13 @@
     .setting-row { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
     .setting-name { font-weight: 650; }
     .setting-desc { color: var(--text-3); font-size: 12px; margin-top: 3px; max-width: 620px; }
-    .switch { width: 44px; height: 24px; border-radius: 999px; background: var(--line-strong); padding: 3px; cursor: pointer; transition: .2s ease; flex: none; }
+    .switch { width: 44px; height: 24px; border-radius: 999px; background: var(--line-strong); padding: 3px; cursor: pointer; transition: .2s ease; flex: none; box-sizing: border-box; display: inline-block; vertical-align: middle; }
     .switch::before { content: ""; display: block; width: 18px; height: 18px; border-radius: 50%; background: white; box-shadow: 0 2px 6px rgba(0,0,0,.18); transition: .2s ease; }
     .switch.on { background: var(--primary); }
     .switch.on::before { transform: translateX(20px); }
+    .switch-sm { width: 36px; height: 20px; min-width: 36px; padding: 2px; }
+    .switch-sm::before { width: 16px; height: 16px; }
+    .switch-sm.on::before { transform: translateX(16px); }
 
     .empty-state { padding: 54px 20px; text-align: center; color: var(--text-3); }
     .empty-illustration { width: 72px; height: 72px; margin: 0 auto 14px; border-radius: 22px; display: grid; place-items: center; color: var(--primary); background: var(--primary-soft); }

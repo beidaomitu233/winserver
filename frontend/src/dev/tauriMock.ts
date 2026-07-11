@@ -53,7 +53,15 @@ const state: AppState = {
     },
   ],
   databases: [
-    { name: 'app_demo', user: 'app_demo', engine: 'mysql', size: '2.4 MB', status: 'ok' },
+    {
+      name: 'app_demo',
+      user: 'app_demo',
+      password: 'demo_pass',
+      engine: 'mysql80',
+      size: '2.4 MB',
+      status: 'ok',
+      mysql_service_id: 'mysql80',
+    },
   ],
   software,
   config_files: [
@@ -276,6 +284,47 @@ export function setupTauriDevMock() {
         root_password: 'minioadmin',
         api_port: 9000,
         console_port: 9001,
+        api_url: 'http://127.0.0.1:9000',
+        console_url: 'http://127.0.0.1:9001',
+        data_dir: 'D:\\WinServer\\runtime\\minio\\data',
+        install_dir: 'D:\\WinServer\\runtime\\minio',
+        running: true,
+        mc_available: true,
+        mc_path: 'D:\\WinServer\\runtime\\minio\\mc.exe',
+        cli_alias_cmd: 'mc alias set winserver http://127.0.0.1:9000 minioadmin minioadmin',
+        policy_help: {
+          public: { id: 'public', label: '公共读写', desc: '匿名用户可读可写', mc: 'mc anonymous set public ALIAS/BUCKET' },
+          download: { id: 'download', label: '公共读 · 私有写', desc: '匿名仅可下载', mc: 'mc anonymous set download ALIAS/BUCKET' },
+          private: { id: 'private', label: '全私有', desc: '匿名不可访问', mc: 'mc anonymous set none ALIAS/BUCKET' },
+        },
+      }
+    }
+    if (cmd === 'minio_buckets_list') {
+      return {
+        count: 3,
+        running: true,
+        api_url: 'http://127.0.0.1:9000',
+        mc_path: 'D:\\WinServer\\runtime\\minio\\mc.exe',
+        buckets: [
+          { name: 'demo-public', policy: 'public', policy_label: '公共读写', url: 'http://127.0.0.1:9000/demo-public' },
+          { name: 'demo-readonly', policy: 'download', policy_label: '公共读 · 私有写', url: 'http://127.0.0.1:9000/demo-readonly' },
+          { name: 'demo-private', policy: 'private', policy_label: '全私有', url: 'http://127.0.0.1:9000/demo-private' },
+        ],
+      }
+    }
+    if (cmd === 'minio_bucket_set_policy') {
+      const bucket = String(payload.bucket || '')
+      const policy = String(payload.policy || 'private')
+      const labels: Record<string, string> = {
+        public: '公共读写',
+        download: '公共读 · 私有写',
+        private: '全私有',
+      }
+      return {
+        bucket,
+        policy,
+        policy_label: labels[policy] || policy,
+        message: `桶 ${bucket} 已设为「${labels[policy] || policy}」`,
       }
     }
     if (cmd === 'get_config_file') {

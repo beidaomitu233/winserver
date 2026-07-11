@@ -236,10 +236,6 @@ async fn api_integration_full() {
 
     // ── 9. Database ──
     println!("\n── Database ──");
-    let sync_resp = rpc_response(&h, "database.sync", json!({})).await;
-    let sync_ok = sync_resp.result.as_ref().and_then(|r| r.get("state")).is_some();
-    rp.rec("DB", "database.sync succeeds or returns structured environment error", sync_ok || has_structured_error(&sync_resp), "returns state or structured MySQL error");
-
     let r = rpc(&h, "database.backups", json!({})).await;
     rp.rec("DB", "database.backups works", r.get("backups").is_some() || r.get("state").is_some(), "returns backups or state");
 

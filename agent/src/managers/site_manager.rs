@@ -25,14 +25,29 @@ pub struct SiteManager {
     handlebars: Arc<Handlebars<'static>>,
 }
 
-/// Nginx vhost template for site configuration.
-const NGINX_VHOST_TEMPLATE: &str = r#"server {
+/// Nginx vhost for static HTML sites (no PHP).
+const NGINX_VHOST_HTML_TEMPLATE: &str = r#"server {
     listen       {{port}};
-    server_name  {{domain}};
+    server_name  {{server_name}};
     root   "{{document_root}}";
 
     location / {
-        index index.php index.html;
+        index index.html index.htm;
+        try_files $uri $uri/ =404;
+        autoindex off;
+    }
+}
+"#;
+
+/// Nginx vhost for PHP sites.
+const NGINX_VHOST_PHP_TEMPLATE: &str = r#"server {
+    listen       {{port}};
+    server_name  {{server_name}};
+    root   "{{document_root}}";
+
+    location / {
+        index index.php index.html index.htm;
+        try_files $uri $uri/ /index.php?$query_string;
         autoindex off;
     }
 
@@ -57,8 +72,11 @@ impl SiteManager {
     ) -> Result<Self> {
         let mut handlebars = Handlebars::new();
         handlebars
-            .register_template_string("nginx_vhost", NGINX_VHOST_TEMPLATE)
-            .context("Failed to register nginx vhost template")?;
+            .register_template_string("nginx_vhost_html", NGINX_VHOST_HTML_TEMPLATE)
+            .context("Failed to register nginx html vhost template")?;
+        handlebars
+            .register_template_string("nginx_vhost_php", NGINX_VHOST_PHP_TEMPLATE)
+            .context("Failed to register nginx php vhost template")?;
 
         Ok(Self {
             data_dir,
@@ -70,6 +88,10 @@ impl SiteManager {
     }
 
     /// Create a new site with the given parameters.
+    ///
+    /// Domain is optional: empty / local means a port-only site on 127.0.0.1
+    /// with `server_name _` (no hosts modification).
+    /// PHP is optional: empty php_runtime_id creates a pure HTML site.
     pub async fn create_site(
         &self,
         domain: &str,
@@ -79,23 +101,57 @@ impl SiteManager {
         php_runtime_id: Option<&str>,
     ) -> Result<()> {
         let site_id = Uuid::new_v4().to_string();
-        let domain = validate_domain(domain)?;
         if port == 0 {
             anyhow::bail!("HTTP 端口必须在 1-65535 范围内");
         }
 
+        let domain = normalize_site_domain(domain, port)?;
+        let wants_hosts = needs_hosts_entry(&domain);
+        let is_php_site = php_runtime_id
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+
         // Parse server type
         let server = match server_type.to_lowercase().as_str() {
-            "nginx" => ServerType::Nginx,
-            _ => anyhow::bail!("第一阶段仅支持 Nginx 站点"),
+            "nginx" | "" => ServerType::Nginx,
+            _ => anyhow::bail!("当前仅支持 Nginx 站点"),
         };
 
         // Determine document root
         let document_root = if path.is_empty() {
-            let www_dir = self.data_dir.join("www").join(&domain);
-            www_dir.to_string_lossy().to_string()
+            let folder = if domain.starts_with("local-")
+                || domain == "localhost"
+                || domain == "127.0.0.1"
+                || domain == "_"
+            {
+                format!("site-{}", port)
+            } else {
+                domain.replace(['.', '*', ':'], "_")
+            };
+            let www_dir = self.data_dir.join("www").join(folder);
+            fs::create_dir_all(&www_dir)
+                .with_context(|| format!("无法创建网站目录：{}", www_dir.display()))?;
+            // Seed a simple index for empty HTML sites
+            let index = www_dir.join("index.html");
+            if !index.exists() {
+                let _ = fs::write(
+                    &index,
+                    format!(
+                        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Site {}</title></head><body><h1>WinServer site on port {}</h1></body></html>",
+                        port, port
+                    ),
+                );
+            }
+            absolutize_path(&www_dir)
         } else {
-            path.to_string()
+            let p = PathBuf::from(path);
+            if !p.exists() {
+                anyhow::bail!("网站目录不存在：{}", path);
+            }
+            if !p.is_dir() {
+                anyhow::bail!("网站目录不是文件夹：{}", path);
+            }
+            absolutize_path(&p)
         };
 
         let doc_root_path = Path::new(&document_root);
@@ -106,56 +162,65 @@ impl SiteManager {
             anyhow::bail!("网站目录不是文件夹：{}", document_root);
         }
 
-        if self
-            .db
-            .list_sites()?
-            .iter()
-            .any(|site| site.domain.eq_ignore_ascii_case(&domain) && site.port == port)
-        {
-            anyhow::bail!("站点已存在：{}:{}", domain, port);
+        if self.db.list_sites()?.iter().any(|site| site.port == port) {
+            anyhow::bail!("端口 {} 已被其他站点占用", port);
         }
 
         let nginx_config = self
             .db
             .get_service_config("nginx")
-            .context("请先导入 Nginx 运行环境")?;
+            .context("请先导入或安装 Nginx 运行环境")?;
         if !nginx_config.installed {
-            anyhow::bail!("请先导入 Nginx 运行环境");
+            anyhow::bail!("请先导入或安装 Nginx 运行环境");
         }
 
-        let php_service_id = self.resolve_php_service(php_runtime_id)?;
-        if !self._process_manager.is_service_running(&php_service_id).await {
-            self._process_manager
-                .start_service(&php_service_id)
-                .await
-                .with_context(|| format!("PHP FastCGI 启动失败：{}", php_service_id))?;
-        }
-        let php_config = self.db.get_service_config(&php_service_id)?;
+        let (php_service_id, php_cgi_port) = if is_php_site {
+            let php_id = self.resolve_php_service(php_runtime_id)?;
+            if !self._process_manager.is_service_running(&php_id).await {
+                self._process_manager
+                    .start_service(&php_id)
+                    .await
+                    .with_context(|| format!("PHP FastCGI 启动失败：{}", php_id))?;
+            }
+            let php_config = self.db.get_service_config(&php_id)?;
+            (Some(php_id), Some(php_config.port))
+        } else {
+            (None, None)
+        };
 
-        let rollback = self.write_nginx_vhost(&nginx_config, &domain, port, &document_root, php_config.port)?;
+        let rollback = self.write_nginx_vhost(
+            &nginx_config,
+            &domain,
+            port,
+            &document_root,
+            php_cgi_port,
+        )?;
         let mut hosts_synced = false;
 
-        let result = (|| -> Result<()> {
+        let result = async {
             self.validate_nginx_config(&nginx_config)?;
-            self.hosts_manager.sync_hosts(&domain)?;
-            hosts_synced = true;
-            self.reload_nginx(&nginx_config)?;
+            if wants_hosts {
+                self.hosts_manager.sync_hosts(&domain)?;
+                hosts_synced = true;
+            }
+            self.reload_or_start_nginx(&nginx_config).await?;
             self.health_check_site(&domain, port)?;
 
             self.db.insert_site(&SiteInfo {
                 id: site_id.clone(),
-                name: domain.clone(),
+                name: format!("{}:{}", display_site_name(&domain, port), port),
                 domain: domain.clone(),
                 port,
                 document_root: document_root.clone(),
                 server_type: server,
-                php_runtime_id: Some(php_service_id.clone()),
+                php_runtime_id: php_service_id.clone(),
                 ssl: false,
                 status: "running".to_string(),
             })?;
 
-            Ok(())
-        })();
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
 
         if let Err(error) = result {
             rollback.restore()?;
@@ -167,16 +232,17 @@ impl SiteManager {
             anyhow::bail!(message);
         }
 
+        let kind = if is_php_site { "PHP" } else { "HTML" };
         self.db.add_log(
             "site.create",
             &domain,
             true,
-            &format!("站点已创建，端口 {}，PHP {}", port, php_service_id),
+            &format!("站点已创建，端口 {}，类型 {}", port, kind),
         )?;
 
         info!(
-            "Site created: {} (port={}, server={})",
-            domain, port, server_type
+            "Site created: {} (port={}, type={})",
+            domain, port, kind
         );
 
         Ok(())
@@ -193,15 +259,21 @@ impl SiteManager {
 
         let rollbacks = self.remove_vhost_configs(&nginx_config, &site)?;
         let mut hosts_removed = false;
+        let wants_hosts = needs_hosts_entry(&site.domain);
 
-        let result = (|| -> Result<()> {
-            self.hosts_manager.remove_hosts(&site.domain)?;
-            hosts_removed = true;
+        let result = async {
+            if wants_hosts {
+                self.hosts_manager.remove_hosts(&site.domain)?;
+                hosts_removed = true;
+            }
             self.validate_nginx_config(&nginx_config)?;
-            self.reload_nginx(&nginx_config)?;
+            if self._process_manager.is_service_running("nginx").await {
+                let _ = self.reload_or_start_nginx(&nginx_config).await;
+            }
             self.db.delete_site(site_id)?;
-            Ok(())
-        })();
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
 
         if let Err(error) = result {
             for rollback in &rollbacks {
@@ -245,23 +317,38 @@ impl SiteManager {
                     .await
                     .with_context(|| format!("PHP FastCGI 启动失败：{}", php_service_id))?;
             }
-            self.db.get_service_config(&php_service_id).map(|c| c.port).unwrap_or(9073)
+            Some(
+                self.db
+                    .get_service_config(&php_service_id)
+                    .map(|c| c.port)
+                    .unwrap_or(9073),
+            )
         } else {
-            9073
+            None
         };
 
-        let rollback = self.write_nginx_vhost(&nginx_config, &site.domain, site.port, &site.document_root, php_cgi_port)?;
+        let rollback = self.write_nginx_vhost(
+            &nginx_config,
+            &site.domain,
+            site.port,
+            &site.document_root,
+            php_cgi_port,
+        )?;
         let mut hosts_synced = false;
+        let wants_hosts = needs_hosts_entry(&site.domain);
 
-        let result = (|| -> Result<()> {
+        let result = async {
             self.validate_nginx_config(&nginx_config)?;
-            self.hosts_manager.sync_hosts(&site.domain)?;
-            hosts_synced = true;
-            self.reload_nginx(&nginx_config)?;
+            if wants_hosts {
+                self.hosts_manager.sync_hosts(&site.domain)?;
+                hosts_synced = true;
+            }
+            self.reload_or_start_nginx(&nginx_config).await?;
             self.health_check_site(&site.domain, site.port)?;
             self.db.update_site_status(site_id, "running")?;
-            Ok(())
-        })();
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
 
         if let Err(error) = result {
             rollback.restore()?;
@@ -293,14 +380,20 @@ impl SiteManager {
         let rollbacks = self.remove_vhost_configs(&nginx_config, &site)?;
         let mut hosts_removed = false;
 
-        let result = (|| -> Result<()> {
-            self.hosts_manager.remove_hosts(&site.domain)?;
-            hosts_removed = true;
+        let wants_hosts = needs_hosts_entry(&site.domain);
+        let result = async {
+            if wants_hosts {
+                self.hosts_manager.remove_hosts(&site.domain)?;
+                hosts_removed = true;
+            }
             self.validate_nginx_config(&nginx_config)?;
-            self.reload_nginx(&nginx_config)?;
+            if self._process_manager.is_service_running("nginx").await {
+                self.reload_nginx(&nginx_config)?;
+            }
             self.db.update_site_status(site_id, "disabled")?;
-            Ok(())
-        })();
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
 
         if let Err(error) = result {
             for rollback in &rollbacks {
@@ -347,22 +440,23 @@ impl SiteManager {
             &site.domain,
             site.port,
             &site.document_root,
-            php_config.port,
+            Some(php_config.port),
         )?;
 
-        let result = (|| -> Result<()> {
+        let result = async {
             self.validate_nginx_config(&nginx_config)?;
-            self.reload_nginx(&nginx_config)?;
+            self.reload_or_start_nginx(&nginx_config).await?;
             self.health_check_site(&site.domain, site.port)?;
             self.db
                 .update_site_php_runtime(site_id, &target_php, "running")?;
-            Ok(())
-        })();
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
 
         if let Err(error) = result {
             rollback.restore()?;
             let _ = self.validate_nginx_config(&nginx_config);
-            let _ = self.reload_nginx(&nginx_config);
+            let _ = self.reload_or_start_nginx(&nginx_config).await;
             let message = error.to_string();
             let _ = self.db.add_log("site.switch_php", site_id, false, &message);
             anyhow::bail!(message);
@@ -392,7 +486,7 @@ impl SiteManager {
             .get_service_config("nginx")
             .context("请先导入 Nginx 运行环境")?;
 
-        let new_domain = validate_domain(domain)?;
+        let new_domain = normalize_site_domain(domain, port)?;
         if port == 0 {
             anyhow::bail!("HTTP 端口必须在 1-65535 范围内");
         }
@@ -408,45 +502,56 @@ impl SiteManager {
             anyhow::bail!("网站目录不存在：{}", document_root);
         }
 
-        // Get PHP port
+        // Get PHP port (optional for HTML sites)
         let php_service_id = site.php_runtime_id.clone().unwrap_or_default();
         let php_cgi_port = if !php_service_id.is_empty() {
-            self.db.get_service_config(&php_service_id).map(|c| c.port).unwrap_or(9073)
+            Some(
+                self.db
+                    .get_service_config(&php_service_id)
+                    .map(|c| c.port)
+                    .unwrap_or(9073),
+            )
         } else {
-            9073
+            None
         };
 
         // Remove old vhost
         let remove_rollbacks = self.remove_vhost_configs(&nginx_config, &site)?;
 
         // Write new vhost
-        let write_rollback = self.write_nginx_vhost(&nginx_config, &new_domain, port, &document_root, php_cgi_port)?;
+        let write_rollback =
+            self.write_nginx_vhost(&nginx_config, &new_domain, port, &document_root, php_cgi_port)?;
         let mut hosts_synced = false;
         let mut hosts_removed = false;
 
-        let result = (|| -> Result<()> {
+        let result = async {
             // Remove old host entry if domain changed
-            if site.domain != new_domain {
+            if site.domain != new_domain && needs_hosts_entry(&site.domain) {
                 self.hosts_manager.remove_hosts(&site.domain)?;
                 hosts_removed = true;
             }
 
-            // Sync new host entry
-            self.hosts_manager.sync_hosts(&new_domain)?;
-            hosts_synced = true;
+            // Sync new host entry when needed
+            if needs_hosts_entry(&new_domain) {
+                self.hosts_manager.sync_hosts(&new_domain)?;
+                hosts_synced = true;
+            }
 
-            // Validate and reload nginx
             self.validate_nginx_config(&nginx_config)?;
-            self.reload_nginx(&nginx_config)?;
-
-            // Health check
+            self.reload_or_start_nginx(&nginx_config).await?;
             self.health_check_site(&new_domain, port)?;
+            self.db.update_site(
+                site_id,
+                &new_domain,
+                port,
+                &document_root,
+                server_type,
+                "running",
+            )?;
 
-            // Update database
-            self.db.update_site(site_id, &new_domain, port, &document_root, server_type, "running")?;
-
-            Ok(())
-        })();
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
 
         if let Err(error) = result {
             // Rollback: restore old vhost
@@ -499,7 +604,7 @@ impl SiteManager {
         domain: &str,
         port: u16,
         document_root: &str,
-        php_cgi_port: u16,
+        php_cgi_port: Option<u16>,
     ) -> Result<FileRollback> {
         let nginx_root = nginx_config.cwd.as_deref().unwrap_or_default();
         if nginx_root.is_empty() {
@@ -519,23 +624,35 @@ impl SiteManager {
         domain: &str,
         port: u16,
         document_root: &str,
-        php_cgi_port: u16,
+        php_cgi_port: Option<u16>,
     ) -> Result<FileRollback> {
         let safe_name = domain.replace(['.', '*', ':'], "_");
         let config_name = format!("{}_{}.conf", safe_name, port);
         let config_path = vhost_dir.join(&config_name);
 
-        // Render the template
+        // Use "_" for local port-only sites so multiple localhost entries on
+        // different ports never conflict with nginx's default server_name.
+        let server_name = if needs_hosts_entry(domain) {
+            domain.to_string()
+        } else {
+            "_".to_string()
+        };
+
+        let template_name = if php_cgi_port.is_some() {
+            "nginx_vhost_php"
+        } else {
+            "nginx_vhost_html"
+        };
         let template_data = serde_json::json!({
-            "domain": domain,
+            "server_name": server_name,
             "port": port,
             "document_root": document_root.replace('\\', "/"),
-            "php_cgi_port": php_cgi_port,
+            "php_cgi_port": php_cgi_port.unwrap_or(0),
         });
 
         let config_content = self
             .handlebars
-            .render("nginx_vhost", &template_data)
+            .render(template_name, &template_data)
             .context("Failed to render nginx vhost template")?;
 
         let rollback = FileRollback::capture(config_path.clone())?;
@@ -579,12 +696,19 @@ impl SiteManager {
 
     fn resolve_php_service(&self, requested: Option<&str>) -> Result<String> {
         let services = self.db.list_service_instances()?;
+        let is_php = |service: &shared::types::ServiceInfo| {
+            service.installed
+                && (service.service_type == "php"
+                    || service.service_type.starts_with("php")
+                    || service.id.starts_with("php"))
+        };
+
         if let Some(id) = requested.filter(|value| !value.trim().is_empty()) {
             let service = services
                 .iter()
                 .find(|service| service.id == id)
                 .ok_or_else(|| anyhow::anyhow!("PHP 运行环境不存在：{}", id))?;
-            if service.service_type != "php" || !service.installed {
+            if !is_php(service) {
                 anyhow::bail!("PHP 运行环境不可用：{}", id);
             }
             return Ok(service.id.clone());
@@ -592,9 +716,48 @@ impl SiteManager {
 
         services
             .into_iter()
-            .find(|service| service.service_type == "php" && service.installed)
+            .find(is_php)
             .map(|service| service.id)
-            .ok_or_else(|| anyhow::anyhow!("没有可用 PHP 运行环境，请先导入 PHP"))
+            .ok_or_else(|| anyhow::anyhow!("没有可用 PHP 运行环境，请先导入或安装 PHP"))
+    }
+
+    /// Apply nginx config: try `reload` first; if the master is dead / pid missing,
+    /// start (or restart) the service. Reload-first avoids port-stealing races with
+    /// health checks and works with test fakes that only implement `-s reload`.
+    async fn reload_or_start_nginx(
+        &self,
+        nginx_config: &crate::database::ServiceConfig,
+    ) -> Result<()> {
+        match self.reload_nginx(nginx_config) {
+            Ok(()) => Ok(()),
+            Err(reload_err) => {
+                let message = reload_err.to_string().to_lowercase();
+                let needs_start = message.contains("invalid pid")
+                    || message.contains("nginx.pid")
+                    || message.contains("not running")
+                    || message.contains("no such file")
+                    || message.contains("open()")
+                    || !self._process_manager.is_service_running("nginx").await;
+
+                if !needs_start {
+                    return Err(reload_err);
+                }
+
+                warn_reload_fallback(&reload_err.to_string());
+                let _ = self._process_manager.stop_service("nginx").await;
+                self._process_manager
+                    .start_service("nginx")
+                    .await
+                    .map_err(|start_err| {
+                        anyhow::anyhow!(
+                            "Nginx 未运行且自动启动失败：{}（reload：{}）",
+                            start_err,
+                            reload_err
+                        )
+                    })?;
+                Ok(())
+            }
+        }
     }
 
     fn validate_nginx_config(&self, nginx_config: &crate::database::ServiceConfig) -> Result<()> {
@@ -604,9 +767,14 @@ impl SiteManager {
         }
 
         let cwd = nginx_config.cwd.as_deref().unwrap_or(".");
-        let output = std::process::Command::new(exe)
+        // Ensure logs dir exists so nginx -t / start don't fail on missing paths.
+        let _ = fs::create_dir_all(Path::new(cwd).join("logs"));
+
+        let mut cmd = crate::process_util::silent_command(exe);
+        let output = cmd
             .arg("-t")
             .current_dir(cwd)
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .output()
@@ -623,9 +791,11 @@ impl SiteManager {
 
     fn reload_nginx(&self, nginx_config: &crate::database::ServiceConfig) -> Result<()> {
         let cwd = nginx_config.cwd.as_deref().unwrap_or(".");
-        let output = std::process::Command::new(&nginx_config.exe)
+        let mut cmd = crate::process_util::silent_command(&nginx_config.exe);
+        let output = cmd
             .args(["-s", "reload"])
             .current_dir(cwd)
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .output()
@@ -642,14 +812,19 @@ impl SiteManager {
 
     fn health_check_site(&self, domain: &str, port: u16) -> Result<()> {
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
-        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2))
+        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(3))
             .with_context(|| format!("站点健康检查失败：127.0.0.1:{} 无法连接", port))?;
         stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
         stream.set_write_timeout(Some(Duration::from_secs(2))).ok();
 
+        let host = if needs_hosts_entry(domain) {
+            domain
+        } else {
+            "127.0.0.1"
+        };
         let request = format!(
             "GET / HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-            domain
+            host
         );
         stream.write_all(request.as_bytes())?;
 
@@ -661,6 +836,58 @@ impl SiteManager {
 
         anyhow::bail!("站点健康检查失败：未收到 HTTP 响应");
     }
+}
+
+fn warn_reload_fallback(message: &str) {
+    tracing::warn!("Nginx reload failed, restarting service: {}", message);
+}
+
+fn absolutize_path(path: &Path) -> String {
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    };
+    let display = abs
+        .canonicalize()
+        .unwrap_or(abs)
+        .to_string_lossy()
+        .to_string();
+    // Strip Windows \\?\ extended prefix for cleaner UI paths
+    display
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&display)
+        .to_string()
+}
+
+fn needs_hosts_entry(domain: &str) -> bool {
+    let d = domain.trim().to_lowercase();
+    !(d.is_empty()
+        || d == "_"
+        || d == "localhost"
+        || d == "127.0.0.1"
+        || d == "0.0.0.0"
+        || d.starts_with("local-"))
+}
+
+fn display_site_name(domain: &str, port: u16) -> String {
+    if needs_hosts_entry(domain) {
+        domain.to_string()
+    } else {
+        format!("本地:{}", port)
+    }
+}
+
+/// Empty domain becomes a local port-only site (127.0.0.1).
+fn normalize_site_domain(domain: &str, port: u16) -> Result<String> {
+    let domain = domain.trim().to_lowercase();
+    if domain.is_empty() || domain == "localhost" || domain == "127.0.0.1" {
+        // Stable unique-ish label for file names; vhost uses server_name _
+        return Ok(format!("local-{}", port));
+    }
+    validate_domain(&domain)
 }
 
 struct FileRollback {

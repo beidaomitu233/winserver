@@ -133,13 +133,15 @@ pub fn run_auto_setup_async(app: &App, app_dir: PathBuf, resource_dir: PathBuf) 
 }
 
 /// Resolve a writable data directory: prefer app_dir/data, fall back to LOCALAPPDATA.
+/// Always returns an absolute path so service logs/configs never resolve under
+/// accidental relative locations like `target/debug/deps/data`.
 fn resolve_data_dir(app_dir: &std::path::Path) -> PathBuf {
     let preferred = app_dir.join("data");
     if std::fs::create_dir_all(&preferred).is_ok() {
         let test_file = preferred.join(".write_test");
         if std::fs::write(&test_file, b"test").is_ok() {
             let _ = std::fs::remove_file(&test_file);
-            return preferred;
+            return absolutize(&preferred);
         }
     }
 
@@ -149,7 +151,16 @@ fn resolve_data_dir(app_dir: &std::path::Path) -> PathBuf {
         .unwrap_or_else(|_| preferred.clone());
     let fallback = local_app_data.join("WinServer").join("data");
     let _ = std::fs::create_dir_all(&fallback);
-    fallback
+    absolutize(&fallback)
+}
+
+fn absolutize(path: &std::path::Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Resolve the directory containing bundled runtime resources.

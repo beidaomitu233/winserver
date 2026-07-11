@@ -74,7 +74,7 @@ impl PortManager {
 
     /// Try to find the process that owns a port using `netstat -ano`.
     fn find_port_owner(&self, port: u16) -> (Option<u32>, Option<String>) {
-        let output = match std::process::Command::new("netstat.exe")
+        let output = match crate::process_util::silent_command("netstat.exe")
             .args(["-ano", "-p", "TCP"])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
@@ -107,8 +107,9 @@ impl PortManager {
 
     /// Get the process name for a given PID using tasklist.
     fn get_process_name(&self, pid: u32) -> Option<String> {
-        let output = std::process::Command::new("tasklist.exe")
+        let output = crate::process_util::silent_command("tasklist.exe")
             .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .output()
@@ -126,8 +127,9 @@ impl PortManager {
     pub fn kill_process(&self, pid: u32) -> anyhow::Result<()> {
         info!("Attempting to kill process PID {}", pid);
 
-        let output = std::process::Command::new("taskkill.exe")
+        let output = crate::process_util::silent_command("taskkill.exe")
             .args(["/PID", &pid.to_string(), "/F"])
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .output()?;

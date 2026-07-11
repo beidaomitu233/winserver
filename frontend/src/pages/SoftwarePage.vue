@@ -33,7 +33,7 @@ const searchQuery = ref('')
 const showImportModal = ref(false)
 const isImporting = ref(false)
 const importForm = ref({
-  runtimeType: 'nginx' as 'nginx' | 'php',
+  runtimeType: 'nginx' as 'nginx' | 'php' | 'mysql',
   installPath: '',
   port: 80,
 })
@@ -71,15 +71,26 @@ const softwareMap = computed(() => {
   return map
 })
 
+const HIDDEN_SOFTWARE = new Set(['apache', 'pgsql', 'mc'])
+
 const softwareList = computed(() => {
   const items = serviceStore.services
-  return items.filter(s => {
-    if (activeTab.value === 'all') return true
-    return packageMap[s.id] === activeTab.value
-  }).filter(s => {
-    const q = searchQuery.value.toLowerCase()
-    if (!q) return true
-    return s.name.toLowerCase().includes(q)
+    .filter(s => !HIDDEN_SOFTWARE.has(s.id))
+    .filter(s => {
+      if (activeTab.value === 'all') return true
+      return packageMap[s.id] === activeTab.value
+    })
+    .filter(s => {
+      const q = searchQuery.value.toLowerCase()
+      if (!q) return true
+      return s.name.toLowerCase().includes(q)
+    })
+  // Installed first, then alphabetical — keeps the list scannable.
+  return [...items].sort((a, b) => {
+    if (a.installed !== b.installed) return a.installed ? -1 : 1
+    if (a.state === 'running' && b.state !== 'running') return -1
+    if (b.state === 'running' && a.state !== 'running') return 1
+    return a.name.localeCompare(b.name, 'zh-CN')
   })
 })
 
@@ -89,12 +100,16 @@ function openImportModal() {
 }
 
 function openImportForService(serviceId: string) {
-  const runtimeType = serviceId.startsWith('php') ? 'php' : 'nginx'
-  importForm.value = {
-    runtimeType,
-    installPath: '',
-    port: runtimeType === 'nginx' ? 80 : 9073,
+  let runtimeType: 'nginx' | 'php' | 'mysql' = 'nginx'
+  let port = 80
+  if (serviceId.startsWith('php')) {
+    runtimeType = 'php'
+    port = 9073
+  } else if (serviceId.startsWith('mysql')) {
+    runtimeType = 'mysql'
+    port = 3306
   }
+  importForm.value = { runtimeType, installPath: '', port }
   showImportModal.value = true
 }
 
@@ -109,9 +124,11 @@ async function browsePath() {
   }
 }
 
-function setImportType(type: 'nginx' | 'php') {
-  importForm.value.runtimeType = type
-  importForm.value.port = type === 'nginx' ? 80 : 9073
+function setImportType(type: 'nginx' | 'php' | 'mysql') {
+  importForm.value.runtimeType = type as any
+  if (type === 'nginx') importForm.value.port = 80
+  else if (type === 'php') importForm.value.port = 9073
+  else importForm.value.port = 3306
 }
 
 function readableError(error: unknown) {
@@ -131,13 +148,21 @@ async function importRuntime() {
 
   isImporting.value = true
   try {
-    const result = await invoke<{ runtime: RuntimeManifest; state: AppState }>('runtime_import', {
+    const result = await invoke<{ runtime: RuntimeManifest; state: AppState; message?: string }>('runtime_import', {
       runtimeType: importForm.value.runtimeType,
       installPath,
       port: Number(importForm.value.port),
     })
-    if (result.state) serviceStore.services = result.state.services
-    show('导入成功', `${result.runtime.runtime_type.toUpperCase()} ${result.runtime.version} 已可用`, 'success')
+    if (result.state) {
+      serviceStore.services = result.state.services
+      if (result.state.software) serviceStore.software = result.state.software
+    } else {
+      await serviceStore.fetchState()
+    }
+    const label = result.runtime
+      ? `${String(result.runtime.runtime_type).toUpperCase()} ${result.runtime.version}`
+      : importForm.value.runtimeType.toUpperCase()
+    show('导入成功', result.message || `${label} 已可用`, 'success')
     showImportModal.value = false
   } catch (e) {
     show('导入失败', readableError(e), 'error')
@@ -184,8 +209,10 @@ function getDownloadPercent(softwareId: string): number {
 
 function getDownloadPhaseText(softwareId: string): string {
   const phase = downloadState.value[softwareId]?.phase ?? ''
+  const pct = getDownloadPercent(softwareId)
   switch (phase) {
-    case 'downloading': return '下载中'
+    case 'downloading':
+      return pct > 0 ? '下载中' : '连接中'
     case 'installing': return '安装中'
     case 'done': return '完成'
     case 'failed': return '失败'
@@ -197,18 +224,33 @@ function startProgressPolling(softwareId: string) {
   if (progressTimers[softwareId]) return
   progressTimers[softwareId] = setInterval(async () => {
     try {
-      const result = await invoke<{ percent: number; phase: string }>('software_download_progress', { softwareId })
-      downloadState.value[softwareId] = { percent: result.percent, phase: result.phase }
+      const result = await invoke<{
+        percent: number
+        phase: string
+        total?: number
+        downloaded?: number
+      }>('software_download_progress', { softwareId })
+      // When Content-Length is missing, backend may report total=0 — keep a
+      // soft indeterminate progress so the bar is not stuck at 0 forever.
+      let percent = Number(result.percent) || 0
+      if (result.phase === 'downloading' && percent <= 0 && (result.downloaded || 0) > 0) {
+        const dl = Number(result.downloaded) || 0
+        // log-scale soft progress up to 90% until total is known
+        percent = Math.min(90, Math.max(5, Math.round(Math.log10(dl + 10) * 12)))
+      }
+      if (result.phase === 'installing' && percent < 92) percent = 92
+      downloadState.value[softwareId] = { percent, phase: result.phase }
       if (result.phase === 'done' || result.phase === 'failed' || result.phase === 'idle') {
         stopProgressPolling(softwareId)
         if (result.phase === 'done') {
+          downloadState.value[softwareId] = { percent: 100, phase: 'done' }
           await serviceStore.fetchState()
         }
       }
     } catch {
       stopProgressPolling(softwareId)
     }
-  }, 500)
+  }, 400)
 }
 
 function stopProgressPolling(softwareId: string) {
@@ -218,34 +260,38 @@ function stopProgressPolling(softwareId: string) {
   }
 }
 
-async function downloadInstall(softwareId: string) {
-  downloadState.value[softwareId] = { percent: 0, phase: 'downloading' }
+/** One-click install: backend prefers bundled package, then catalog download. */
+async function oneClickInstall(softwareId: string) {
+  downloadState.value[softwareId] = { percent: 0, phase: 'installing' }
   startProgressPolling(softwareId)
   try {
-    const result = await invoke<{ state: any; message: string }>('software_download_install', { softwareId })
+    const result = await invoke<{ state: any; message: string }>('software_install', { softwareId })
     if (result.state) {
       await serviceStore.fetchState()
-    }
-    show('安装成功', result.message || `${softwareId} 安装完成`, 'success')
-  } catch (e) {
-    show('安装失败', readableError(e), 'error')
-    downloadState.value[softwareId] = { percent: 0, phase: 'failed' }
-    stopProgressPolling(softwareId)
-  }
-}
-
-async function bundledInstall(softwareId: string) {
-  downloadState.value[softwareId] = { percent: 0, phase: 'installing' }
-  try {
-    const result = await invoke<{ state: any; message: string }>('software_install_bundled', { softwareId })
-    if (result.state) {
+    } else {
       await serviceStore.fetchState()
     }
-    show('安装成功', result.message || `${softwareId} 内置版本安装完成`, 'success')
+    show('安装成功', result.message || `${softwareId} 已安装并完成配置`, 'success')
     downloadState.value[softwareId] = { percent: 100, phase: 'done' }
   } catch (e) {
-    show('安装失败', readableError(e), 'error')
-    downloadState.value[softwareId] = { percent: 0, phase: 'failed' }
+    // Fallbacks for older command shapes
+    try {
+      if (softwareMap.value[softwareId]?.has_bundled) {
+        await invoke('software_install_bundled', { softwareId })
+      } else if (softwareMap.value[softwareId]?.download_url) {
+        await invoke('software_download_install', { softwareId })
+      } else {
+        throw e
+      }
+      await serviceStore.fetchState()
+      show('安装成功', `${softwareId} 已安装并完成配置`, 'success')
+      downloadState.value[softwareId] = { percent: 100, phase: 'done' }
+    } catch (e2) {
+      show('安装失败', readableError(e2), 'error')
+      downloadState.value[softwareId] = { percent: 0, phase: 'failed' }
+    }
+  } finally {
+    stopProgressPolling(softwareId)
   }
 }
 
@@ -292,30 +338,33 @@ onUnmounted(() => {
 
       <div class="software-list">
         <template v-if="softwareList.length > 0">
-          <div v-for="svc in softwareList" :key="svc.id" class="software-row">
+          <div
+            v-for="svc in softwareList"
+            :key="svc.id"
+            class="software-row"
+            :class="{ 'is-running': svc.state === 'running', 'is-installed': svc.installed }"
+          >
             <div class="software-main">
               <div
                 class="service-logo"
                 :style="{ '--logo': getServiceMeta(svc.id).color }"
                 v-html="serviceLogo({ id: svc.id, name: svc.name })"
               />
-              <div>
-                <div class="table-title">{{ svc.name }}</div>
-                <div v-if="svc.error_message" class="subline">{{ svc.error_message }}</div>
+              <div class="software-meta">
+                <div class="table-title">
+                  {{ svc.name }}
+                  <span v-if="svc.state === 'running'" class="run-pill">运行中</span>
+                </div>
+                <div class="subline">
+                  <template v-if="svc.installed">
+                    {{ svc.port ? `端口 ${svc.port}` : '已就绪' }}
+                    <span v-if="svc.state === 'failed' && svc.error_message"> · {{ svc.error_message }}</span>
+                  </template>
+                  <template v-else>
+                    {{ softwareMap[svc.id]?.has_local ? '本机已检测到，可导入' : '未安装' }}
+                  </template>
+                </div>
               </div>
-            </div>
-            <div class="software-status">
-              <span
-                class="badge"
-                :class="svc.state === 'running' ? 'success' : ''"
-              >
-                <span
-                  class="status-dot"
-                  :class="svc.state === 'running' ? 'running' : 'stopped'"
-                />
-                {{ svc.state === 'running' ? '运行' : '停止' }}
-              </span>
-              <span v-if="svc.installed" class="badge installed-tag">已安装</span>
             </div>
             <div class="software-actions">
               <template v-if="svc.installed">
@@ -326,7 +375,7 @@ onUnmounted(() => {
                 >
                   {{ svc.state === 'running' ? '停止' : '启动' }}
                 </button>
-                <button class="btn small" @click="uninstallSoftware(svc.id)">卸载</button>
+                <button class="btn small ghost" @click="uninstallSoftware(svc.id)">卸载</button>
               </template>
               <template v-else-if="isDownloading(svc.id)">
                 <div class="download-progress">
@@ -338,17 +387,11 @@ onUnmounted(() => {
               </template>
               <template v-else>
                 <button
-                  v-if="softwareMap[svc.id]?.has_bundled"
                   class="btn small primary"
-                  @click="bundledInstall(svc.id)"
+                  :disabled="isDownloading(svc.id)"
+                  @click="oneClickInstall(svc.id)"
                 >安装</button>
-                <button
-                  v-if="softwareMap[svc.id]?.download_url"
-                  class="btn small"
-                  @click="downloadInstall(svc.id)"
-                >在线安装</button>
-                <button class="btn small" @click="openImportForService(svc.id)">导入</button>
-                <span v-if="softwareMap[svc.id]?.has_local" class="local-hint">检测到本机已安装</span>
+                <button class="btn small ghost" @click="openImportForService(svc.id)">导入</button>
               </template>
             </div>
           </div>
@@ -373,10 +416,11 @@ onUnmounted(() => {
                 <select
                   class="select"
                   :value="importForm.runtimeType"
-                  @change="setImportType(($event.target as HTMLSelectElement).value as 'nginx' | 'php')"
+                  @change="setImportType(($event.target as HTMLSelectElement).value as 'nginx' | 'php' | 'mysql')"
                 >
                   <option value="nginx">Nginx</option>
                   <option value="php">PHP</option>
+                  <option value="mysql">MySQL</option>
                 </select>
               </div>
               <div class="form-row">
@@ -395,7 +439,7 @@ onUnmounted(() => {
                   <button class="btn" @click="browsePath" type="button">浏览</button>
                 </div>
                 <div class="form-hint">
-                  Nginx 目录需包含 nginx.exe 和 conf\nginx.conf；PHP 目录需包含 php.exe、php-cgi.exe 和 php.ini。
+                  Nginx：nginx.exe + conf\nginx.conf；PHP：php.exe / php-cgi.exe / php.ini；MySQL：bin\mysqld.exe（端口固定 3306，5.7/8.0 不同时运行）。
                 </div>
               </div>
             </div>
@@ -413,6 +457,41 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.software-meta {
+  min-width: 0;
+}
+.software-meta .subline {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+.run-pill {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--success);
+  background: var(--success-soft);
+  vertical-align: middle;
+}
+.software-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.btn.ghost {
+  background: transparent;
+  color: var(--text-3);
+}
+.btn.ghost:hover {
+  color: var(--danger, #e11d48);
+  border-color: color-mix(in srgb, var(--danger, #e11d48) 35%, var(--line));
+}
 .download-progress {
   display: flex;
   align-items: center;
@@ -441,11 +520,6 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.local-hint {
-  font-size: 11px;
-  color: var(--text-3, #94a3b8);
-  margin-left: 4px;
-}
 
 .software-status {
   display: flex;

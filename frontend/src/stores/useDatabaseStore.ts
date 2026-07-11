@@ -35,17 +35,12 @@ export const useDatabaseStore = defineStore('databases', () => {
     await fetchState()
   }
 
-  async function exportDatabase(dbName: string) {
-    await invoke('db_export', { dbName })
+  async function exportDatabase(dbName: string, path?: string) {
+    await invoke('db_export', { dbName, path: path || null })
   }
 
   async function importDatabase(dbName: string, path: string) {
     await invoke('db_import', { dbName, path })
-  }
-
-  async function syncDatabases() {
-    await invoke('db_sync')
-    await fetchState()
   }
 
   async function getBackups() {
@@ -56,5 +51,16 @@ export const useDatabaseStore = defineStore('databases', () => {
     await invoke('db_delete_backup', { path })
   }
 
-  return { databases, fetchState, createDatabase, deleteDatabase, changePassword, rootPassword, exportDatabase, importDatabase, syncDatabases, getBackups, deleteBackup }
+  return {
+    databases,
+    fetchState,
+    createDatabase,
+    deleteDatabase,
+    changePassword,
+    rootPassword,
+    exportDatabase,
+    importDatabase,
+    getBackups,
+    deleteBackup,
+  }
 })

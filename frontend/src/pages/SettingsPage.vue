@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, inject } from 'vue'
+import { ref, onMounted, inject } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useServiceStore } from '../stores/useServiceStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
@@ -31,7 +31,6 @@ const menuItems: Array<[string, string, string]> = [
   ['network', '网络', 'network'],
   ['security', '安全', 'shield'],
   ['backup', '备份', 'backup'],
-  ['appearance', '外观', 'sun'],
 ]
 
 const titleMap: Record<string, string> = {
@@ -39,29 +38,31 @@ const titleMap: Record<string, string> = {
   network: '端口与网络',
   security: '安全设置',
   backup: '备份策略',
-  appearance: '外观主题',
-}
-
-const isDark = computed(() => document.documentElement.dataset.theme === 'dark')
-
-function toggleDark() {
-  const next = isDark.value ? 'light' : 'dark'
-  document.documentElement.dataset.theme = next
-  localStorage.setItem('ws-theme', next)
 }
 
 async function toggleAutostart() {
   const next = !settingsStore.settings.autostart
-  await settingsStore.updateSettings({ autostart: next })
+  await autoSave({ autostart: next })
 }
 
 async function toggleStartSuite() {
   const next = !settingsStore.settings.start_suite_on_launch
-  await settingsStore.updateSettings({ start_suite_on_launch: next })
+  await autoSave({ start_suite_on_launch: next })
 }
 
-async function saveSettings() {
-  // Already saved reactively; this is a confirmation
+async function autoSave(updates: Record<string, unknown>) {
+  try {
+    await settingsStore.updateSettings(updates as any)
+    show('已保存', '设置已更新', 'success')
+  } catch (e: any) {
+    show('保存失败', String(e?.message || e), 'error')
+  }
+}
+
+let saveTimer: number | null = null
+function debounceSave(updates: Record<string, unknown>) {
+  if (saveTimer) window.clearTimeout(saveTimer)
+  saveTimer = window.setTimeout(() => autoSave(updates), 400)
 }
 
 async function changeRootPassword() {
@@ -177,9 +178,7 @@ onMounted(() => {
         <h1 class="page-title">设置</h1>
       </div>
       <div class="page-actions">
-        <button class="btn primary" @click="saveSettings">
-          <svg class="icon icon-sm"><use href="#i-check" /></svg>保存
-        </button>
+        <span style="font-size: 12px; color: var(--text-3)">修改后自动保存</span>
       </div>
     </div>
 
@@ -231,45 +230,6 @@ onMounted(() => {
                 />
               </div>
             </div>
-            <div class="setting-group">
-              <div class="setting-row">
-                <div>
-                  <div class="setting-name">phpMyAdmin 地址</div>
-                  <div class="setting-desc">数据库管理工具的访问地址</div>
-                </div>
-                <input
-                  class="input"
-                  :value="settingsStore.settings.php_my_admin_url"
-                  style="width: 280px"
-                  @change="settingsStore.updateSettings({ php_my_admin_url: ($event.target as HTMLInputElement).value })"
-                />
-              </div>
-            </div>
-          </div>
-        </template>
-
-        <!-- Startup section removed per PRD §12 (no "启动与服务" tab) -->
-
-        <!-- Appearance -->
-        <template v-else-if="activeSection === 'appearance'">
-          <div class="card-head">
-            <div class="card-title">{{ titleMap.appearance }}</div>
-            <span class="badge primary">本机配置</span>
-          </div>
-          <div class="settings-section">
-            <div class="setting-group">
-              <div class="setting-row">
-                <div>
-                  <div class="setting-name">深色模式</div>
-                  <div class="setting-desc">在浅色和深色主题之间切换</div>
-                </div>
-                <div
-                  class="switch"
-                  :class="{ on: isDark }"
-                  @click="toggleDark"
-                />
-              </div>
-            </div>
           </div>
         </template>
 
@@ -293,21 +253,7 @@ onMounted(() => {
                   max="65535"
                   :value="settingsStore.settings.port || 80"
                   style="width: 100px"
-                  @change="settingsStore.updateSettings({ port: Number(($event.target as HTMLInputElement).value) })"
-                />
-              </div>
-            </div>
-            <div class="setting-group">
-              <div class="setting-row">
-                <div>
-                  <div class="setting-name">phpMyAdmin 地址</div>
-                  <div class="setting-desc">数据库管理工具的访问地址</div>
-                </div>
-                <input
-                  class="input"
-                  :value="settingsStore.settings.php_my_admin_url"
-                  style="width: 280px"
-                  @change="settingsStore.updateSettings({ php_my_admin_url: ($event.target as HTMLInputElement).value })"
+                  @input="debounceSave({ port: Number(($event.target as HTMLInputElement).value) })"
                 />
               </div>
             </div>

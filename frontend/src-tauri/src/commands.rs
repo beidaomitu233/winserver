@@ -188,6 +188,43 @@ pub async fn minio_config_save(state: State<'_, Arc<App>>, params: String) -> Re
 }
 
 #[tauri::command]
+pub async fn minio_buckets_list(
+    state: State<'_, Arc<App>>,
+    params: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let params_value: serde_json::Value = match params.as_deref() {
+        Some(raw) if !raw.trim().is_empty() => {
+            serde_json::from_str(raw).map_err(|e| e.to_string())?
+        }
+        _ => json!({}),
+    };
+    call_handler(&state, "minio.buckets.list", params_value).await
+}
+
+#[tauri::command]
+pub async fn minio_bucket_set_policy(
+    state: State<'_, Arc<App>>,
+    bucket: String,
+    policy: String,
+    root_user: Option<String>,
+    root_password: Option<String>,
+    api_port: Option<u16>,
+) -> Result<serde_json::Value, String> {
+    call_handler(
+        &state,
+        "minio.bucket.setPolicy",
+        json!({
+            "bucket": bucket,
+            "policy": policy,
+            "root_user": root_user,
+            "root_password": root_password,
+            "api_port": api_port,
+        }),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn db_create(state: State<'_, Arc<App>>, db: String, user: String, pass: String) -> Result<serde_json::Value, String> {
     call_handler(&state, "database.create", json!({ "db": db, "user": user, "pass": pass })).await
 }
@@ -208,18 +245,21 @@ pub async fn db_root_password(state: State<'_, Arc<App>>, current_pass: String, 
 }
 
 #[tauri::command]
-pub async fn db_export(state: State<'_, Arc<App>>, db_name: String) -> Result<serde_json::Value, String> {
-    call_handler(&state, "database.export", json!({ "db": db_name })).await
+pub async fn db_export(
+    state: State<'_, Arc<App>>,
+    db_name: String,
+    path: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let mut params = json!({ "db": db_name });
+    if let Some(path) = path.filter(|p| !p.trim().is_empty()) {
+        params["path"] = json!(path);
+    }
+    call_handler(&state, "database.export", params).await
 }
 
 #[tauri::command]
 pub async fn db_import(state: State<'_, Arc<App>>, db_name: String, path: String) -> Result<serde_json::Value, String> {
     call_handler(&state, "database.import", json!({ "db": db_name, "path": path })).await
-}
-
-#[tauri::command]
-pub async fn db_sync(state: State<'_, Arc<App>>) -> Result<serde_json::Value, String> {
-    call_handler(&state, "database.sync", json!({})).await
 }
 
 #[tauri::command]
@@ -278,7 +318,23 @@ pub async fn runtime_import(
 
 #[tauri::command]
 pub async fn open_folder(path: String) -> Result<serde_json::Value, String> {
-    std::process::Command::new("explorer.exe").arg(&path).spawn().map_err(|e| e.to_string())?;
+    let path = path.trim().trim_start_matches(r"\\?\").to_string();
+    if path.is_empty() {
+        return Err("目录路径为空".into());
+    }
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("目录不存在：{}", path));
+    }
+    // explorer requires a path; spawn without flashing a console (CREATE_NO_WINDOW).
+    let mut cmd = std::process::Command::new("explorer.exe");
+    cmd.arg(&path);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.spawn().map_err(|e| e.to_string())?;
     Ok(json!({ "message": format!("已打开: {}", path) }))
 }
 
