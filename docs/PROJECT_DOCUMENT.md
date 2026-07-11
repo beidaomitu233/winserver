@@ -14,6 +14,9 @@ WinServer 是 Windows 本地 Web 服务面板，目标是提供类似 phpStudy �
 
 关联文档：
 
+- `docs/GITFLOW.md`（**强制**：分支与发版，保证可用性）
+- `docs/RELEASE_CHECKLIST.md`（合入 develop / main 检查清单）
+- `AGENTS.md`（协作者 / Agent 速查）
 - `docs/WINSERVER_INTRODUCTION.md`
 - `docs/prd.md`
 - `docs/验收文档.md`
