@@ -159,6 +159,33 @@ impl RequestHandler {
             }
         }
 
+        // Ensure mc.exe is always co-located with any registered MinIO install.
+        if let Ok(cfg) = self.db.get_service_config("minio") {
+            let install = cfg
+                .cwd
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .or_else(|| {
+                    Path::new(&cfg.exe)
+                        .parent()
+                        .map(|p| p.to_path_buf())
+                });
+            if let Some(dir) = install {
+                if let Err(e) = self
+                    .runtime_manager
+                    .ensure_minio_client(&dir, Some(runtime_dir))
+                {
+                    warn!(
+                        "run_auto_setup: ensure mc for minio at {} failed: {}",
+                        dir.display(),
+                        e
+                    );
+                } else {
+                    info!("run_auto_setup: minio client (mc) ready at {}", dir.display());
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -798,10 +825,11 @@ impl RequestHandler {
         if !running {
             anyhow::bail!("MinIO 未运行，请先启动服务后再管理桶权限");
         }
-        let mc = ctx
-            .mc_exe
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("未找到 mc.exe（MinIO Client）。请在软件页安装 MinIO Client，或将 mc.exe 放到 MinIO 安装目录。"))?;
+        let mc = ctx.mc_exe.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "MinIO 客户端初始化失败，请确认网络可用后点击「刷新列表」（将自动内置 mc）。"
+            )
+        })?;
 
         let host_env = minio_mc_host_env(&ctx);
         let output = run_mc(mc, &host_env, &["ls", "--json", "winserver"])?;
@@ -814,7 +842,7 @@ impl RequestHandler {
                 out.to_string()
             };
             anyhow::bail!(
-                "列出桶失败：{}。请确认 Root 账号密码与正在运行的 MinIO 一致（当前配置用户：{}）。",
+                "列出桶失败：{}（当前 Root 用户：{}）",
                 summarize_mc_error(&msg),
                 ctx.root_user
             );
@@ -888,10 +916,9 @@ impl RequestHandler {
         if !running {
             anyhow::bail!("MinIO 未运行，请先启动服务后再修改桶权限");
         }
-        let mc = ctx
-            .mc_exe
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("未找到 mc.exe（MinIO Client）。请将 mc.exe 放到 MinIO 安装目录。"))?;
+        let mc = ctx.mc_exe.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("MinIO 客户端未就绪，请点击「刷新列表」以自动内置 mc 后再试")
+        })?;
 
         let host_env = minio_mc_host_env(&ctx);
         let target = format!("winserver/{}", bucket);
@@ -962,7 +989,22 @@ impl RequestHandler {
             (parent.clone(), parent.join("data"))
         };
 
-        let mc_exe = resolve_mc_exe(&install_dir, self.db.as_ref());
+        // Always ensure mc.exe is present next to MinIO (copy from bundle or download).
+        // Bucket policy UI depends on the client; never ask the user to install it manually.
+        let mc_exe = match self
+            .runtime_manager
+            .ensure_minio_client(&install_dir, Some(self.runtime_dir.as_path()))
+        {
+            Ok(path) => Some(path),
+            Err(error) => {
+                warn!(
+                    "ensure_minio_client failed for {}: {}",
+                    install_dir.display(),
+                    error
+                );
+                resolve_mc_exe(&install_dir, self.db.as_ref(), Some(self.runtime_dir.as_path()))
+            }
+        };
 
         let _ = env_path;
         Ok(MinioContext {
@@ -2336,15 +2378,29 @@ MINIO_CONSOLE_PORT={}
     )
 }
 
-/// Locate `mc.exe` next to MinIO, from software registry, or common fallbacks.
-fn resolve_mc_exe(install_dir: &Path, db: &crate::database::Database) -> Option<PathBuf> {
-    let candidates = [
+/// Locate `mc.exe` next to MinIO, from software registry, runtime bundle, or fallbacks.
+fn resolve_mc_exe(
+    install_dir: &Path,
+    db: &crate::database::Database,
+    runtime_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    let mut candidates = vec![
         install_dir.join("mc.exe"),
         install_dir.join("bin").join("mc.exe"),
     ];
+    if let Some(rd) = runtime_dir {
+        candidates.push(rd.join("minio").join("mc.exe"));
+        candidates.push(rd.join("mc.exe"));
+    }
+    candidates.push(PathBuf::from("runtime/minio/mc.exe"));
+
     for c in &candidates {
         if c.is_file() {
-            return Some(c.clone());
+            if let Ok(meta) = std::fs::metadata(c) {
+                if meta.len() > 0 {
+                    return Some(c.clone());
+                }
+            }
         }
     }
 
@@ -2359,12 +2415,6 @@ fn resolve_mc_exe(install_dir: &Path, db: &crate::database::Database) -> Option<
                 return Some(as_dir);
             }
         }
-    }
-
-    // Bundled runtime fallback (dev / portable layout)
-    let bundled = PathBuf::from("runtime/minio/mc.exe");
-    if bundled.is_file() {
-        return Some(bundled);
     }
 
     None
@@ -2489,10 +2539,10 @@ fn validate_minio_bucket_name(name: &str) -> anyhow::Result<()> {
 fn summarize_mc_error(msg: &str) -> String {
     let lower = msg.to_lowercase();
     if lower.contains("invalidaccesskeyid") || lower.contains("access key") {
-        return "Access Key 无效：请将 minio.env 中的 Root 用户/密码改为当前运行实例使用的账号，保存后重试".into();
+        return "Access Key 无效：请在上方把 Root 用户/密码改成当前 MinIO 实际账号，然后点「刷新列表」（无需先去别处安装客户端）".into();
     }
     if lower.contains("signaturedoesnotmatch") || lower.contains("password") {
-        return "密码不匹配：请检查 Root 密码是否与运行中的 MinIO 一致".into();
+        return "密码不匹配：请修正上方 Root 密码后点「刷新列表」".into();
     }
     if lower.contains("connection refused") || lower.contains("connectex") {
         return "无法连接 MinIO API，请确认服务已启动".into();

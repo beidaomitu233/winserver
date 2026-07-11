@@ -1,6 +1,6 @@
 [package]
 name = "winserver-desktop"
-version = "0.1.0"
+version = "1.0.0"
 description = "WinServer Cloud Stack Desktop"
 authors = ["WinServer"]
 license = ""

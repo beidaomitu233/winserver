@@ -23,11 +23,163 @@ impl RuntimeManager {
     }
 
     fn update_bundled_companion_software(&self, software_id: &str, target_dir: &Path, install_path: &str) {
-        if software_id == "minio" && target_dir.join("mc.exe").exists() {
-            if let Err(error) = self.db.update_software_bundled_installed("mc", install_path) {
-                warn!("failed to mark bundled MinIO client as installed: {}", error);
+        if software_id == "minio" {
+            // Always try to place mc next to MinIO so bucket policy UI works out of the box.
+            if let Err(error) = self.ensure_minio_client(target_dir, None) {
+                warn!("failed to ensure MinIO client (mc.exe) for {}: {}", install_path, error);
+            }
+            if target_dir.join("mc.exe").exists() {
+                if let Err(error) = self.db.update_software_bundled_installed("mc", install_path) {
+                    warn!("failed to mark bundled MinIO client as installed: {}", error);
+                }
             }
         }
+    }
+
+    /// Ensure `mc.exe` (MinIO Client) exists next to MinIO for anonymous/policy commands.
+    ///
+    /// Search order:
+    /// 1. `{install_dir}/mc.exe` (already present)
+    /// 2. Bundled runtime (`runtime_dir/minio/mc.exe`, etc.)
+    /// 3. Managed install `data/server/minio/mc.exe`
+    /// 4. Official download (last resort)
+    ///
+    /// On success, returns the absolute path to a usable `mc.exe` (preferring install_dir).
+    pub fn ensure_minio_client(
+        &self,
+        install_dir: &Path,
+        runtime_dir: Option<&Path>,
+    ) -> Result<PathBuf> {
+        let _ = fs::create_dir_all(install_dir);
+        let target = install_dir.join("mc.exe");
+        if is_usable_mc_exe(&target) {
+            self.mark_mc_installed(install_dir);
+            return Ok(target);
+        }
+
+        if let Some(src) = self.find_mc_source(install_dir, runtime_dir) {
+            if src != target {
+                info!(
+                    "ensure_minio_client: copying {} → {}",
+                    src.display(),
+                    target.display()
+                );
+                fs::copy(&src, &target).with_context(|| {
+                    format!(
+                        "复制 mc.exe 失败：{} → {}",
+                        src.display(),
+                        target.display()
+                    )
+                })?;
+            }
+            if is_usable_mc_exe(&target) {
+                self.mark_mc_installed(install_dir);
+                return Ok(target);
+            }
+        }
+
+        // Last resort: pull official Windows mc (requires network).
+        info!("ensure_minio_client: downloading official mc.exe → {}", target.display());
+        match self.download_mc_exe(&target) {
+            Ok(()) if is_usable_mc_exe(&target) => {
+                self.mark_mc_installed(install_dir);
+                Ok(target)
+            }
+            Ok(()) => anyhow::bail!("下载的 mc.exe 无效：{}", target.display()),
+            Err(error) => Err(error).context(
+                "无法自动安装 MinIO 客户端 (mc.exe)：内置资源缺失且下载失败，请检查网络后重试",
+            ),
+        }
+    }
+
+    fn mark_mc_installed(&self, install_dir: &Path) {
+        let path = install_dir.to_string_lossy().replace('\\', "/");
+        if let Err(error) = self.db.update_software_bundled_installed("mc", &path) {
+            warn!("mark_mc_installed failed: {}", error);
+        }
+    }
+
+    /// Locate an existing mc.exe we can copy into the MinIO install dir.
+    fn find_mc_source(&self, install_dir: &Path, runtime_dir: Option<&Path>) -> Option<PathBuf> {
+        let mut candidates: Vec<PathBuf> = Vec::new();
+
+        if let Some(rd) = runtime_dir {
+            candidates.push(rd.join("minio").join("mc.exe"));
+            candidates.push(rd.join("mc.exe"));
+            // Tauri resource layouts sometimes nest under _up_
+            candidates.push(rd.join("_up_").join("runtime").join("minio").join("mc.exe"));
+            candidates.push(rd.join("_up_").join("_up_").join("runtime").join("minio").join("mc.exe"));
+        }
+        // Handler may store runtime_dir; also check manager data layout
+        candidates.push(self.data_dir.join("server").join("minio").join("mc.exe"));
+        candidates.push(self.data_dir.join("runtime").join("minio").join("mc.exe"));
+
+        // Dev / portable workspace relative to cwd
+        candidates.push(PathBuf::from("runtime/minio/mc.exe"));
+        candidates.push(PathBuf::from("runtime").join("minio").join("mc.exe"));
+
+        // Sibling of current process (packaged app next to resources)
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                candidates.push(dir.join("mc.exe"));
+                candidates.push(dir.join("minio").join("mc.exe"));
+                candidates.push(dir.join("resources").join("minio").join("mc.exe"));
+                candidates.push(dir.join("resources").join("runtime").join("minio").join("mc.exe"));
+            }
+        }
+
+        // Common local installs
+        for p in [
+            "D:/minio/mc.exe",
+            "C:/minio/mc.exe",
+            r"C:\Program Files\minio\mc.exe",
+        ] {
+            candidates.push(PathBuf::from(p));
+        }
+
+        // Avoid using the empty/broken target as source
+        candidates.into_iter().find(|p| {
+            p.as_path() != install_dir.join("mc.exe").as_path() && is_usable_mc_exe(p)
+        })
+    }
+
+    fn download_mc_exe(&self, dest: &Path) -> Result<()> {
+        let url = catalog_download_url("mc")
+            .unwrap_or("https://dl.min.io/client/mc/release/windows-amd64/mc.exe");
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(180))
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .build()
+            .context("failed to build mc download client")?;
+        let mut response = client
+            .get(url)
+            .send()
+            .with_context(|| format!("下载 mc 失败：{}", url))?;
+        if !response.status().is_success() {
+            anyhow::bail!("下载 mc 失败：HTTP {}", response.status());
+        }
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let tmp = dest.with_extension("download");
+        {
+            let mut file = fs::File::create(&tmp)
+                .with_context(|| format!("无法创建临时文件 {}", tmp.display()))?;
+            response
+                .copy_to(&mut file)
+                .context("写入 mc.exe 下载内容失败")?;
+            file.flush().ok();
+        }
+        // Atomic-ish replace
+        if dest.exists() {
+            let _ = fs::remove_file(dest);
+        }
+        fs::rename(&tmp, dest).or_else(|_| {
+            fs::copy(&tmp, dest)?;
+            let _ = fs::remove_file(&tmp);
+            Ok::<(), anyhow::Error>(())
+        })?;
+        Ok(())
     }
 
     /// Import a local MySQL installation directory (contains bin/mysqld.exe).
@@ -802,6 +954,14 @@ impl RuntimeManager {
                     let _ = fs::write(&env_path, default_minio_env());
                     info!("register_generic_service: wrote default minio.env at {}", env_path.display());
                 }
+                // Ship mc.exe with MinIO so bucket ACL UI never depends on manual install.
+                if let Err(error) = self.ensure_minio_client(install_dir.as_path(), None) {
+                    warn!(
+                        "register_generic_service: ensure mc.exe failed for {}: {}",
+                        install_dir.display(),
+                        error
+                    );
+                }
                 let exe_str = exe_path.to_string_lossy().replace('\\', "/");
                 let data_str = data_path.to_string_lossy().replace('\\', "/");
                 let args = format!("server {} --address :9000 --console-address :9001", data_str);
@@ -1343,10 +1503,12 @@ pub fn catalog_download_url(software_id: &str) -> Option<&'static str> {
         }
         // MinIO single binary (if local bundle missing)
         "minio" => Some("https://dl.min.io/server/minio/release/windows-amd64/minio.exe"),
+        // MinIO Client — always available as companion for bucket policy ops
+        "mc" => Some("https://dl.min.io/client/mc/release/windows-amd64/mc.exe"),
         // Redis Windows (Memurai-free community ports vary; prefer bundled)
         "redis" => None,
         "nginx" | "mysql80" => None, // prefer bundled
-        "apache" | "pgsql" | "mc" => None,
+        "apache" | "pgsql" => None,
         _ => None,
     }
 }
@@ -1374,6 +1536,14 @@ innodb_buffer_pool_size=64M
 port={}
 default-character-set=utf8
 "#, port, dir_str, dir_str, port)
+}
+
+/// Prefer a non-empty mc binary. Official builds are ~30MB; empty stubs are rejected.
+fn is_usable_mc_exe(path: &Path) -> bool {
+    match fs::metadata(path) {
+        Ok(meta) => meta.is_file() && meta.len() > 0,
+        Err(_) => false,
+    }
 }
 
 /// Recursively copy the contents of `src` into `dst` (preserving relative paths).
@@ -1768,7 +1938,8 @@ mod tests {
         let bundled_minio = runtime_dir.join("minio");
         fs::create_dir_all(&bundled_minio).expect("create minio bundle");
         fs::write(bundled_minio.join("minio.exe"), "").expect("write minio exe");
-        fs::write(bundled_minio.join("mc.exe"), "").expect("write mc exe");
+        // Non-empty stub so ensure_minio_client accepts it without network download.
+        fs::write(bundled_minio.join("mc.exe"), vec![0u8; 64]).expect("write mc exe");
         fs::write(bundled_minio.join("minio.env"), default_minio_env()).expect("write minio env");
 
         let manager = RuntimeManager::new(data_dir.clone(), db.clone());

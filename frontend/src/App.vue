@@ -159,7 +159,14 @@ async function closeWindow() {
 let refreshTimer: number | null = null
 let resourceTimer: number | null = null
 
+function blockNativeContextMenu(event: Event) {
+  // Desktop shell: hide WebView/Electron-style native right-click menu.
+  event.preventDefault()
+}
+
 onMounted(async () => {
+  document.addEventListener('contextmenu', blockNativeContextMenu, true)
+
   // Poll the backend init status until the background auto-setup completes.
   initTimer = window.setInterval(async () => {
     try {
@@ -187,6 +194,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('contextmenu', blockNativeContextMenu, true)
   if (refreshTimer) clearInterval(refreshTimer)
   if (resourceTimer) clearInterval(resourceTimer)
   if (initTimer) clearInterval(initTimer)

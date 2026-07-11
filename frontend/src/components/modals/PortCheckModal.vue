@@ -11,7 +11,6 @@ const result = ref<PortCheckResult | null>(null)
 const checking = ref(false)
 const killing = ref(false)
 const errorMessage = ref('')
-const killing = ref(false)
 
 async function checkPort() {
   const portNum = Number(port.value)

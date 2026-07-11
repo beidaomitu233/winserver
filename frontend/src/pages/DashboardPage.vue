@@ -46,7 +46,6 @@ const dashboardServices = computed(() => {
 })
 
 const runningCount = computed(() => dashboardServices.value.filter(s => s.state === 'running').length)
-const installedCount = computed(() => dashboardServices.value.filter(s => s.installed).length)
 const siteCount = computed(() => siteStore.sites.length)
 const dbCount = computed(() => databaseStore.databases.length)
 const installedApps = computed(() => dashboardServices.value.filter(s => s.installed))
@@ -182,10 +181,6 @@ onMounted(async () => {
           <h1 class="panel-title">WinServer 控制台</h1>
         </div>
         <div class="panel-overview-actions">
-          <span class="panel-online">
-            <span class="status-dot running" />
-            {{ runningCount }} 在线 / {{ installedCount }} 已装
-          </span>
           <button class="btn primary" :disabled="serviceStore.suiteLoading" @click="startAll">
             <svg class="icon icon-sm"><use href="#i-play" /></svg>
             {{ serviceStore.suiteLoading ? '启动中' : '一键启动' }}
@@ -323,27 +318,30 @@ onMounted(async () => {
 <style scoped>
 /*
   Layout rules:
-  - Overview + monitor/sysinfo keep stable size (never compressed by apps).
-  - Apps can wrap to multiple rows; page scrolls via .content.
-  - Rings scale with viewport (vmin/vw), not a low fixed max.
+  - Fill the content area top-to-bottom (贴合上下).
+  - Overview keeps content height; mid + apps share remaining height evenly.
+  - Gap stays fixed; flex-grow distributes free space between sections.
+  - Overflow scrolls inside cards, not by squashing mid band.
 */
 .panel-home {
   display: flex;
   flex-direction: column;
   gap: 12px;
   box-sizing: border-box;
-  min-height: 100%;
-  height: auto;
-  overflow: visible;
-  padding-bottom: 8px;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+  padding-bottom: 0;
 }
 
 .panel-overview {
   flex: 0 0 auto;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-md, 12px);
   background: var(--surface-solid);
-  padding: 12px 16px 12px;
+  padding: 14px 16px;
+  box-shadow: none;
 }
 .panel-overview-head {
   display: flex;
@@ -362,18 +360,13 @@ onMounted(async () => {
 }
 .panel-title { margin: 0; font-size: 17px; font-weight: 780; }
 .panel-overview-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.panel-online {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 32px; padding: 0 12px; border-radius: 999px;
-  border: 1px solid var(--line); background: var(--surface-soft);
-  font-size: 12px; font-weight: 650; color: var(--text-2);
-}
 .panel-kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
 .panel-kpi {
-  text-align: left; border: 1px solid var(--line); border-radius: 10px;
+  text-align: left; border: 0; border-radius: 10px;
   background: var(--surface-soft); padding: 10px 14px; font: inherit; color: inherit; cursor: pointer;
+  transition: background .14s ease;
 }
-button.panel-kpi:hover { border-color: color-mix(in srgb, var(--primary) 40%, var(--line)); }
+button.panel-kpi:hover { background: var(--surface-hover); }
 div.panel-kpi { cursor: default; }
 .panel-kpi-label { font-size: 12px; color: var(--text-3); font-weight: 650; }
 .panel-kpi-value { margin-top: 4px; font-size: 24px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
@@ -381,20 +374,21 @@ div.panel-kpi { cursor: default; }
 .panel-kpi-value-sm { font-size: 16px; padding-top: 4px; }
 .panel-kpi-hint { margin-top: 3px; font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Fixed-size mid band — never flex-shrink when apps overflow */
+/* Mid band + apps share leftover height; mid capped so apps keep 2-row room */
 .panel-mid {
-  flex: 0 0 auto;
+  flex: 1 1 0;
   display: grid;
   grid-template-columns: minmax(0, 1.65fr) minmax(280px, 1fr);
   gap: 12px;
   align-items: stretch;
-  min-height: 220px;
-  height: clamp(220px, 28vh, 320px);
+  min-height: 180px;
+  max-height: min(280px, 34vh);
+  height: auto;
 }
 
 .panel-card {
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-md, 12px);
   background: var(--surface-solid);
   display: flex;
   flex-direction: column;
@@ -402,11 +396,13 @@ div.panel-kpi { cursor: default; }
   min-height: 0;
   overflow: hidden;
   height: 100%;
+  box-shadow: none;
 }
 
 .panel-monitor,
 .panel-sysinfo {
   min-height: 0;
+  height: 100%;
 }
 
 .panel-card-head {
@@ -510,71 +506,156 @@ div.panel-kpi { cursor: default; }
 .panel-sys-row strong { font-weight: 650; text-align: right; min-width: 0; }
 .panel-sys-row .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 62%; }
 
-/* Apps grow freely; extra rows scroll the page, never squeeze mid/overview */
+/* Apps: fixed equal card tiles, no height drift / partial clip */
 .panel-apps {
-  flex: 0 0 auto;
+  flex: 1.35 1 0;
+  min-height: 0;
+  height: auto;
   display: flex;
   flex-direction: column;
 }
 .panel-app-grid {
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  /* Every row same height → cards align, second row not half-cut */
+  grid-auto-rows: 156px;
+  gap: 12px;
   padding: 12px 14px 14px;
   align-content: start;
+  align-items: stretch;
+  overflow: auto;
 }
 .panel-app-card {
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 12px;
   padding: 12px;
   background: var(--surface-soft);
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-height: 132px;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
-.panel-app-card.running { border-color: color-mix(in srgb, var(--success) 35%, var(--line)); }
+.panel-app-card.running {
+  background: color-mix(in srgb, var(--success-soft) 70%, var(--surface-soft));
+}
 .panel-app-logo {
-  width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
   color: var(--logo, var(--primary));
   background: color-mix(in srgb, var(--logo, var(--primary)) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--logo, var(--primary)) 18%, transparent);
+  flex: 0 0 36px;
+}
+.panel-app-logo :deep(svg),
+.panel-app-logo :deep(.service-brand),
+.panel-app-logo :deep(.service-brand svg) {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+.panel-app-logo :deep(.service-brand) {
+  width: 24px;
+  height: 24px;
+  line-height: 0;
+}
+.panel-app-name {
+  font-weight: 740;
+  font-size: 13px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   flex: 0 0 auto;
 }
-.panel-app-logo :deep(svg) { width: 28px; height: 28px; }
-.panel-app-name { font-weight: 740; font-size: 13px; }
-.panel-app-state { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-3); }
+.panel-app-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.2;
+  min-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 0 auto;
+}
 .panel-app-actions {
   display: flex;
   gap: 6px;
   margin-top: auto;
   width: 100%;
-  padding-top: 4px;
+  padding-top: 2px;
+  flex: 0 0 auto;
 }
-.panel-app-actions .btn.small { height: 32px; padding: 0 12px; font-size: 12px; }
+.panel-app-actions .btn.small {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+}
 .btn.ghost { background: transparent; color: var(--text-3); }
 .panel-app-empty {
-  border: 1px dashed var(--line-strong); border-radius: 12px; background: transparent;
-  color: var(--text-3); font: inherit; cursor: pointer; min-height: 120px;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  cursor: pointer;
+  min-height: 156px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   grid-column: 1 / -1;
 }
 
 @media (max-width: 1180px) {
-  .panel-mid {
-    grid-template-columns: 1fr;
+  /* Narrow: allow natural flow + page scroll instead of forced fill */
+  .panel-home {
     height: auto;
+    max-height: none;
+    min-height: 100%;
+    overflow: visible;
+  }
+  .panel-mid {
+    flex: 0 0 auto;
+    grid-template-columns: 1fr;
     min-height: 200px;
+    max-height: none;
+    height: auto;
   }
   .panel-monitor { min-height: 200px; height: auto; }
   .panel-sysinfo { height: auto; }
-  .panel-app-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .panel-apps {
+    flex: 0 0 auto;
+    min-height: auto;
+  }
+  .panel-app-grid {
+    overflow: visible;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: 156px;
+  }
   .panel-kpi-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
 
 @media (max-width: 720px) {
   .panel-rings { grid-template-columns: repeat(2, minmax(0,1fr)); }
-  .panel-app-grid { grid-template-columns: 1fr; }
-  .panel-mid { height: auto; }
+  .panel-app-grid {
+    grid-template-columns: 1fr;
+    grid-auto-rows: 156px;
+  }
+  .panel-mid { height: auto; max-height: none; }
 }
 </style>

@@ -177,9 +177,6 @@ onMounted(() => {
       <div>
         <h1 class="page-title">设置</h1>
       </div>
-      <div class="page-actions">
-        <span style="font-size: 12px; color: var(--text-3)">修改后自动保存</span>
-      </div>
     </div>
 
     <div class="settings-layout">

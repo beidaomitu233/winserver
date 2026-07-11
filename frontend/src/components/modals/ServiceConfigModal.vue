@@ -65,7 +65,6 @@ const minioBuckets = ref<Array<{
 const minioBucketsLoading = ref(false)
 const minioBucketsError = ref('')
 const minioPolicyBusy = ref('')
-const copiedField = ref('')
 
 const minioPolicyOptions = [
   {
@@ -437,27 +436,6 @@ function policyLabel(policy: string) {
   return policy || '未知'
 }
 
-function policyTone(policy: string) {
-  const p = normalizePolicy(policy)
-  if (p === 'public') return 'warning'
-  if (p === 'download') return 'primary'
-  if (p === 'private') return 'success'
-  return ''
-}
-
-async function copyText(text: string, field: string) {
-  if (!text) return
-  try {
-    await navigator.clipboard.writeText(text)
-    copiedField.value = field
-    setTimeout(() => {
-      if (copiedField.value === field) copiedField.value = ''
-    }, 1500)
-  } catch {
-    show('复制失败', '浏览器未授权剪贴板', 'error')
-  }
-}
-
 async function openMinioUrl(url: string) {
   if (!url) return
   try {
@@ -535,111 +513,18 @@ const minioLiveConsoleUrl = computed(() =>
           </div>
 
           <div v-else-if="serviceId === 'minio'" class="minio-config">
-            <!-- Connection info card -->
-            <section class="minio-info-card">
-              <div class="minio-info-head">
-                <div class="minio-brand">
-                  <div class="minio-brand-icon" aria-hidden="true">
-                    <svg viewBox="0 0 48 48" width="28" height="28">
-                      <rect x="8" y="8" width="32" height="32" rx="6" fill="currentColor" opacity=".18" />
-                      <path d="M16 16h16v16H16z" fill="currentColor" opacity=".85" />
-                    </svg>
-                  </div>
-                  <div>
-                    <div class="minio-brand-title">MinIO 对象存储</div>
-                    <div class="minio-brand-sub">社区版控制台已禁止改桶权限，请在此用内置 mc 命令管理</div>
-                  </div>
-                </div>
-                <div class="minio-status" :class="minioInfo.running ? 'on' : 'off'">
-                  <span class="status-dot" :class="minioInfo.running ? 'running' : 'stopped'" />
-                  {{ minioInfo.running ? '运行中' : '未运行' }}
-                </div>
+            <div class="minio-toolbar">
+              <div class="minio-status" :class="minioInfo.running ? 'on' : 'off'">
+                <span class="status-dot" :class="minioInfo.running ? 'running' : 'stopped'" />
+                {{ minioInfo.running ? '运行中' : '未运行' }}
               </div>
-
-              <div class="minio-info-grid">
-                <div class="minio-info-item">
-                  <div class="minio-info-label">API 端点</div>
-                  <div class="minio-info-value mono">{{ minioLiveApiUrl }}</div>
-                  <div class="minio-info-actions">
-                    <button type="button" class="link-btn" @click="copyText(minioLiveApiUrl, 'api')">
-                      {{ copiedField === 'api' ? '已复制' : '复制' }}
-                    </button>
-                    <button type="button" class="link-btn" @click="openMinioUrl(minioLiveApiUrl)">打开</button>
-                  </div>
-                </div>
-                <div class="minio-info-item">
-                  <div class="minio-info-label">控制台 WebUI</div>
-                  <div class="minio-info-value mono">{{ minioLiveConsoleUrl }}</div>
-                  <div class="minio-info-actions">
-                    <button type="button" class="link-btn" @click="copyText(minioLiveConsoleUrl, 'console')">
-                      {{ copiedField === 'console' ? '已复制' : '复制' }}
-                    </button>
-                    <button type="button" class="link-btn" @click="openMinioUrl(minioLiveConsoleUrl)">打开</button>
-                  </div>
-                </div>
-                <div class="minio-info-item">
-                  <div class="minio-info-label">Root 用户</div>
-                  <div class="minio-info-value mono">{{ minioForm.root_user || '—' }}</div>
-                  <div class="minio-info-actions">
-                    <button type="button" class="link-btn" @click="copyText(minioForm.root_user, 'user')">
-                      {{ copiedField === 'user' ? '已复制' : '复制' }}
-                    </button>
-                  </div>
-                </div>
-                <div class="minio-info-item">
-                  <div class="minio-info-label">Root 密码</div>
-                  <div class="minio-info-value mono">
-                    {{ showMinioPassword ? (minioForm.root_password || '—') : '••••••••' }}
-                  </div>
-                  <div class="minio-info-actions">
-                    <button type="button" class="link-btn" @click="showMinioPassword = !showMinioPassword">
-                      {{ showMinioPassword ? '隐藏' : '显示' }}
-                    </button>
-                    <button type="button" class="link-btn" @click="copyText(minioForm.root_password, 'pass')">
-                      {{ copiedField === 'pass' ? '已复制' : '复制' }}
-                    </button>
-                  </div>
-                </div>
-                <div class="minio-info-item span-2">
-                  <div class="minio-info-label">数据目录</div>
-                  <div class="minio-info-value path">{{ minioInfo.data_dir || '—' }}</div>
-                  <div class="minio-info-actions">
-                    <button
-                      v-if="minioInfo.data_dir"
-                      type="button"
-                      class="link-btn"
-                      @click="copyText(minioInfo.data_dir, 'data')"
-                    >
-                      {{ copiedField === 'data' ? '已复制' : '复制' }}
-                    </button>
-                  </div>
-                </div>
-                <div class="minio-info-item span-2">
-                  <div class="minio-info-label">CLI 快捷命令</div>
-                  <div class="minio-info-value path mono sm">{{ minioInfo.cli_alias_cmd || 'mc alias set …' }}</div>
-                  <div class="minio-info-actions">
-                    <button
-                      v-if="minioInfo.cli_alias_cmd"
-                      type="button"
-                      class="link-btn"
-                      @click="copyText(minioInfo.cli_alias_cmd, 'cli')"
-                    >
-                      {{ copiedField === 'cli' ? '已复制' : '复制' }}
-                    </button>
-                  </div>
-                </div>
+              <div class="minio-toolbar-links">
+                <button type="button" class="link-btn" @click="openMinioUrl(minioLiveApiUrl)">API</button>
+                <button type="button" class="link-btn" @click="openMinioUrl(minioLiveConsoleUrl)">控制台</button>
               </div>
+            </div>
 
-              <div class="minio-policy-legend">
-                <div v-for="opt in minioPolicyOptions" :key="opt.id" class="legend-chip" :class="opt.tone">
-                  <strong>{{ opt.label }}</strong>
-                  <span>{{ opt.desc }}</span>
-                </div>
-              </div>
-            </section>
-
-            <!-- Basic config fields -->
-            <div class="config-form minio-form">
+            <div class="config-form">
               <div class="config-field">
                 <label>API 端口</label>
                 <input v-model.number="minioForm.api_port" type="number" min="1" max="65535" class="input" />
@@ -649,7 +534,7 @@ const minioLiveConsoleUrl = computed(() =>
                 <input v-model.number="minioForm.console_port" type="number" min="1" max="65535" class="input" />
               </div>
               <div class="config-field">
-                <label>Root 用户名</label>
+                <label>Root 用户</label>
                 <input v-model="minioForm.root_user" class="input" autocomplete="off" />
               </div>
               <div class="config-field">
@@ -669,67 +554,39 @@ const minioLiveConsoleUrl = computed(() =>
               </div>
             </div>
 
-            <!-- Bucket policy manager -->
-            <section class="minio-buckets">
+            <p v-if="minioInfo.data_dir" class="minio-path">{{ minioInfo.data_dir }}</p>
+
+            <div class="minio-buckets">
               <div class="minio-buckets-head">
-                <div>
-                  <div class="section-title">桶权限管理</div>
-                  <div class="section-sub">
-                    内置 <code>mc anonymous set</code>：公共读写 / 公共读私有写 / 全私有
-                  </div>
-                </div>
+                <span class="minio-buckets-title">桶权限</span>
                 <button
                   type="button"
                   class="btn small"
                   :disabled="minioBucketsLoading"
                   @click="loadMinioBuckets"
                 >
-                  {{ minioBucketsLoading ? '刷新中…' : '刷新列表' }}
+                  {{ minioBucketsLoading ? '…' : '刷新' }}
                 </button>
               </div>
 
-              <div v-if="minioBucketsLoading" class="buckets-empty">正在读取桶列表…</div>
-              <div v-else-if="minioBucketsError" class="buckets-error">
-                <div class="buckets-error-title">无法加载桶列表</div>
-                <div class="buckets-error-msg">{{ minioBucketsError }}</div>
-                <div class="buckets-error-hint">
-                  提示：若 MinIO 是手动启动且账号与下方配置不一致，请先改对 Root 用户/密码并保存，再重启服务后刷新。
-                </div>
-              </div>
-              <div v-else-if="!minioBuckets.length" class="buckets-empty">
-                暂无桶。请先在控制台或 CLI 创建桶后再设置权限。
-              </div>
+              <div v-if="minioBucketsLoading" class="minio-hint">加载中…</div>
+              <div v-else-if="minioBucketsError" class="minio-hint error">{{ minioBucketsError }}</div>
+              <div v-else-if="!minioBuckets.length" class="minio-hint">暂无桶</div>
               <div v-else class="bucket-list">
                 <div v-for="b in minioBuckets" :key="b.name" class="bucket-row">
-                  <div class="bucket-main">
-                    <div class="bucket-icon" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" width="18" height="18">
-                        <path
-                          d="M4 7.5 12 4l8 3.5v9L12 20l-8-3.5v-9Z"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.6"
-                        />
-                        <path d="M4 7.5 12 11l8-3.5M12 11v9" fill="none" stroke="currentColor" stroke-width="1.6" />
-                      </svg>
-                    </div>
-                    <div class="bucket-meta">
-                      <div class="bucket-name">{{ b.name }}</div>
-                      <div class="bucket-url mono">{{ b.url }}</div>
-                    </div>
-                    <span class="badge" :class="policyTone(b.policy)">{{ b.policy_label || policyLabel(b.policy) }}</span>
-                  </div>
-                  <div class="bucket-actions">
+                  <div class="bucket-name">{{ b.name }}</div>
+                  <div class="policy-seg" role="group" :aria-label="`${b.name} 权限`">
                     <button
                       v-for="opt in minioPolicyOptions"
                       :key="opt.id"
                       type="button"
-                      class="policy-btn"
-                      :class="[
-                        opt.tone,
-                        { active: normalizePolicy(b.policy) === opt.id, busy: minioPolicyBusy === `${b.name}:${opt.id}` },
-                      ]"
-                      :disabled="!!minioPolicyBusy || normalizePolicy(b.policy) === opt.id"
+                      class="policy-seg-btn"
+                      :class="{
+                        active: normalizePolicy(b.policy) === opt.id,
+                        busy: minioPolicyBusy === `${b.name}:${opt.id}`,
+                        [opt.tone]: true,
+                      }"
+                      :disabled="!!minioPolicyBusy"
                       :title="opt.desc"
                       @click="setBucketPolicy(b.name, opt.id)"
                     >
@@ -738,7 +595,7 @@ const minioLiveConsoleUrl = computed(() =>
                   </div>
                 </div>
               </div>
-            </section>
+            </div>
           </div>
 
           <div v-else-if="serviceId === 'nginx'" class="config-form">
@@ -927,197 +784,138 @@ const minioLiveConsoleUrl = computed(() =>
 }
 .unsaved { font-size: 12px; color: var(--warning); }
 
-/* ---- MinIO panel ---- */
-.minio-config { display: flex; flex-direction: column; gap: 16px; }
-.minio-info-card {
-  border: 1px solid color-mix(in srgb, #c72c48 22%, var(--line));
-  border-radius: 14px;
-  padding: 16px;
-  background:
-    radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, #c72c48 14%, transparent), transparent 55%),
-    linear-gradient(180deg, var(--surface-solid), var(--surface-soft));
-  box-shadow: 0 10px 28px rgba(40, 20, 30, 0.05);
-}
-.minio-info-head {
+/* ---- MinIO: flat modern layout (no nested boxes) ---- */
+.minio-config {
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
+  gap: 16px;
+}
+.minio-toolbar {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 14px;
 }
-.minio-brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.minio-brand-icon {
-  width: 44px; height: 44px; border-radius: 12px;
-  display: grid; place-items: center;
-  color: #c72c48;
-  background: color-mix(in srgb, #c72c48 12%, transparent);
-  border: 1px solid color-mix(in srgb, #c72c48 18%, transparent);
-  flex: none;
-}
-.minio-brand-title { font-weight: 760; font-size: 15px; }
-.minio-brand-sub { color: var(--text-3); font-size: 12px; margin-top: 2px; line-height: 1.4; }
 .minio-status {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 28px; padding: 0 10px; border-radius: 999px;
-  font-size: 12px; font-weight: 650; flex: none;
-  background: var(--surface-soft); color: var(--text-2);
-  border: 1px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-3);
 }
-.minio-status.on { background: var(--success-soft); color: var(--success); border-color: transparent; }
-.minio-status.off { background: var(--surface-soft); color: var(--text-3); }
-
-.minio-info-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-.minio-info-item {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 11px 12px;
-  background: color-mix(in srgb, var(--surface-solid) 88%, transparent);
-  min-width: 0;
-}
-.minio-info-item.span-2 { grid-column: 1 / -1; }
-.minio-info-label {
-  font-size: 11px; font-weight: 650; color: var(--text-3);
-  letter-spacing: .02em; margin-bottom: 4px;
-}
-.minio-info-value {
-  font-weight: 680; color: var(--text);
-  word-break: break-all; line-height: 1.35;
-}
-.minio-info-value.mono,
-.mono {
-  font-family: 'Cascadia Code', Consolas, 'SF Mono', monospace;
-  font-size: 13px;
-}
-.minio-info-value.sm { font-size: 12px; font-weight: 560; color: var(--text-2); }
-.minio-info-value.path { font-size: 12px; color: var(--text-2); font-weight: 560; }
-.minio-info-actions {
-  display: flex; gap: 8px; margin-top: 7px;
+.minio-status.on { color: var(--success); }
+.minio-toolbar-links {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 .link-btn {
-  border: 0; background: transparent; padding: 0;
-  color: var(--primary); font: inherit; font-size: 12px; font-weight: 650;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
   cursor: pointer;
 }
-.link-btn:hover { text-decoration: underline; }
-
-.minio-policy-legend {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 12px;
-}
-.legend-chip {
-  border-radius: 10px;
-  padding: 9px 10px;
-  border: 1px solid var(--line);
-  background: var(--surface-solid);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.legend-chip strong { font-size: 12px; font-weight: 720; }
-.legend-chip span { font-size: 11px; color: var(--text-3); line-height: 1.35; }
-.legend-chip.warning { border-color: color-mix(in srgb, var(--warning) 35%, var(--line)); background: var(--warning-soft); }
-.legend-chip.primary { border-color: color-mix(in srgb, var(--primary) 28%, var(--line)); background: var(--primary-soft); }
-.legend-chip.success { border-color: color-mix(in srgb, var(--success) 30%, var(--line)); background: var(--success-soft); }
-
-.minio-form { margin-top: 2px; }
-
-.minio-buckets {
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 14px;
-  background: var(--surface-solid);
-}
-.minio-buckets-head {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
-  margin-bottom: 12px;
-}
-.section-title { font-weight: 740; font-size: 14px; }
-.section-sub { color: var(--text-3); font-size: 12px; margin-top: 3px; }
-.section-sub code {
-  font-family: 'Cascadia Code', Consolas, monospace;
+.link-btn:hover { opacity: .85; }
+.minio-path {
+  margin: -4px 0 0;
   font-size: 11px;
-  padding: 1px 5px;
-  border-radius: 5px;
-  background: var(--surface-soft);
-  color: var(--text-2);
-}
-.buckets-empty, .buckets-error {
-  padding: 16px 12px;
-  border-radius: 10px;
-  background: var(--surface-soft);
   color: var(--text-3);
-  font-size: 13px;
-  text-align: center;
+  word-break: break-all;
+  line-height: 1.4;
 }
-.buckets-error { text-align: left; border: 1px solid color-mix(in srgb, var(--danger) 25%, var(--line)); background: var(--danger-soft); }
-.buckets-error-title { font-weight: 720; color: var(--danger); margin-bottom: 4px; }
-.buckets-error-msg { color: var(--text-2); font-size: 12px; line-height: 1.45; word-break: break-word; }
-.buckets-error-hint { margin-top: 8px; font-size: 11px; color: var(--text-3); line-height: 1.45; }
 
-.bucket-list { display: flex; flex-direction: column; gap: 8px; }
-.bucket-row {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 11px 12px;
+.minio-buckets { display: flex; flex-direction: column; gap: 8px; }
+.minio-buckets-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.minio-buckets-title {
+  font-size: 13px;
+  font-weight: 720;
+  color: var(--text);
+}
+.minio-hint {
+  padding: 10px 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.minio-hint.error { color: var(--danger); }
+
+.bucket-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  background: linear-gradient(180deg, var(--surface-solid), var(--surface-soft));
-  transition: border-color .15s ease;
 }
-.bucket-row:hover { border-color: var(--line-strong); }
-.bucket-main {
-  display: flex; align-items: center; gap: 10px; min-width: 0;
+.bucket-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
 }
-.bucket-icon {
-  width: 34px; height: 34px; border-radius: 10px;
-  display: grid; place-items: center;
-  color: #c72c48; background: color-mix(in srgb, #c72c48 10%, transparent);
+.bucket-row:last-child { border-bottom: 0; }
+.bucket-name {
+  font-weight: 680;
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Segmented control for the three policies */
+.policy-seg {
+  display: inline-flex;
   flex: none;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--surface-soft);
+  gap: 2px;
 }
-.bucket-meta { min-width: 0; flex: 1; }
-.bucket-name { font-weight: 720; }
-.bucket-url { color: var(--text-3); font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bucket-actions {
-  display: flex; flex-wrap: wrap; gap: 6px;
+.policy-seg-btn {
+  height: 30px;
+  min-width: 52px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
 }
-.policy-btn {
-  height: 30px; padding: 0 12px; border-radius: 8px;
-  border: 1px solid var(--line);
+.policy-seg-btn:hover:not(:disabled):not(.active) {
+  color: var(--text);
+}
+.policy-seg-btn:disabled { cursor: default; }
+.policy-seg-btn.active {
   background: var(--surface-solid);
-  color: var(--text-2);
-  font: inherit; font-size: 12px; font-weight: 650;
-  cursor: pointer; transition: .15s ease;
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(20, 33, 61, 0.08);
 }
-.policy-btn:hover:not(:disabled) { border-color: var(--line-strong); color: var(--text); }
-.policy-btn:disabled { opacity: .55; cursor: default; }
-.policy-btn.active.warning,
-.policy-btn.warning.active {
-  background: var(--warning-soft); color: #b7791f; border-color: color-mix(in srgb, var(--warning) 40%, transparent);
-}
-.policy-btn.active.primary,
-.policy-btn.primary.active {
-  background: var(--primary-soft); color: var(--primary); border-color: color-mix(in srgb, var(--primary) 35%, transparent);
-}
-.policy-btn.active.success,
-.policy-btn.success.active {
-  background: var(--success-soft); color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, transparent);
-}
-.policy-btn.busy { opacity: .7; }
-.badge.primary { background: var(--primary-soft); color: var(--primary); }
-.badge.warning { background: var(--warning-soft); color: #b7791f; }
-.badge.success { background: var(--success-soft); color: var(--success); }
+.policy-seg-btn.active.warning { color: #b7791f; }
+.policy-seg-btn.active.primary { color: var(--primary); }
+.policy-seg-btn.active.success { color: var(--success); }
+.policy-seg-btn.busy { opacity: .65; }
 
 @media (max-width: 720px) {
-  .minio-info-grid,
-  .minio-policy-legend { grid-template-columns: 1fr; }
-  .minio-info-item.span-2 { grid-column: auto; }
+  .bucket-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 12px 0;
+  }
+  .policy-seg { width: 100%; }
+  .policy-seg-btn { flex: 1; min-width: 0; }
 }
 </style>

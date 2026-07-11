@@ -207,7 +207,6 @@ onMounted(() => {
     <div class="page-header">
       <div>
         <h1 class="page-title">数据库</h1>
-        <p class="page-subtitle">列表仅显示当前运行/激活的 MySQL 版本中的数据库</p>
       </div>
       <div class="page-actions">
         <button class="btn" @click="openRootPasswordModal">

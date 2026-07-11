@@ -85,7 +85,6 @@ pub fn run() {
             commands::kill_process,
             commands::open_url,
             commands::open_file,
-            commands::kill_process,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
