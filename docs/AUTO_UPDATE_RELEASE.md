@@ -50,6 +50,25 @@ https://github.com/beidaomitu233/winserver/releases/latest/download/latest.json
 
 若仓库迁移或改名，必须在发布前同步修改该地址并先发布过渡版本。
 
+### 1.4 Bundled runtime 构建资产
+
+`runtime/` 包含体积较大的第三方程序并被 Git 忽略。GitHub runner 在编译前会从 `v1.0.0` Release 下载：
+
+```text
+winserver-runtime-bundle-v1.zip
+```
+
+`.github/workflows/release.yml` 固定校验该文件的 SHA-256，再解压到 `runtime/`。构建资产至少包含：
+
+```text
+nginx-1.26.3.zip
+mysql-8.0.12-winx64.zip
+redis-7.2.4/
+minio/
+```
+
+新增、删除或升级 runtime 时，维护者必须重新生成构建资产、上传一个新的不可变文件名（例如 `winserver-runtime-bundle-v2.zip`），并在同一个 PR 中更新下载 URL、SHA-256、`tauri.conf.json` 的 resources 列表和资源验证脚本。不要用 `--clobber` 静默替换已经被工作流引用的同名资产，否则旧提交将无法复现构建。
+
 ## 2. 版本号约定
 
 使用语义化版本：
@@ -306,6 +325,7 @@ GitHub 的“Latest release”必须是要下发的正式版本。预发布版�
 | Actions 找不到私钥 | 检查 Repository Secret 名称是否严格为 `TAURI_SIGNING_PRIVATE_KEY` |
 | 私钥密码错误 | 更新 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`，不要修改客户端公钥 |
 | Release 缺少 `latest.json` | 检查 tauri-action 和 `createUpdaterArtifacts`，不要宣告发布完成 |
+| CI 提示 `runtime/... doesn't exist` | 检查 runtime 构建资产 URL、SHA-256、压缩包目录结构和 Restore 步骤 |
 | 客户端提示签名错误 | 立即停止分发，核对签名私钥是否与内置公钥配对 |
 | 新版本存在严重缺陷 | 撤下 Latest 标记并从 `main` 创建 `hotfix/*`，发布更高 patch 版本 |
 | 更新安装失败 | 保留旧版本与用户数据，收集 Actions、客户端和 NSIS 日志进一步验证 |
