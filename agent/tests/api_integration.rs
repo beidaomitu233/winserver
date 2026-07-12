@@ -2,7 +2,6 @@
 /// Tests every RPC endpoint against a real Database + RequestHandler.
 /// Uses temp directories. Records every step with pass/fail + reasoning.
 /// Generates HTML report.
-
 use std::fs;
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -157,7 +156,7 @@ async fn api_integration_full() {
     // ── 3. Software ──
     println!("\n── Software ──");
     let s = state(&h).await;
-    rp.rec_d("Software", "software list populated", s.software.len() > 0,
+    rp.rec_d("Software", "software list populated", !s.software.is_empty(),
         "has entries", &format!("count={}", s.software.len()));
 
     let r = rpc(&h, "software.installBundled", json!({ "softwareId": "nginx" })).await;

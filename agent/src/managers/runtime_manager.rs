@@ -9,7 +9,7 @@ use tracing::{info, warn, error};
 use zip::ZipArchive;
 
 use shared::types::{RuntimeManifest, RuntimeType};
-use crate::database::Database;
+use crate::database::{Database, ServiceRuntimeRegistration};
 
 /// Scans the data directory for installed runtime versions (PHP, Nginx, etc.).
 pub struct RuntimeManager {
@@ -936,7 +936,7 @@ impl RuntimeManager {
                 let exe_str = exe_path.to_string_lossy().replace('\\', "/");
                 let conf_str = conf_path.to_string_lossy().replace('\\', "/");
                 let args = if conf_path.exists() {
-                    format!("redis.conf")
+                    "redis.conf".to_string()
                 } else {
                     String::new()
                 };
@@ -1241,17 +1241,18 @@ impl RuntimeManager {
         let cwd = root.to_string_lossy().to_string();
         let config_path = nginx_conf.to_string_lossy().to_string();
 
-        self.db.upsert_service_runtime(
-            "nginx",
-            &format!("Nginx {}", version),
-            "nginx",
-            "nginx.exe",
+        let name = format!("Nginx {}", version);
+        self.db.upsert_service_runtime(ServiceRuntimeRegistration {
+            id: "nginx",
+            name: &name,
+            service_type: "nginx",
+            process_name: "nginx.exe",
             port,
-            &exe,
-            "",
-            &cwd,
-            Some(&config_path),
-        )?;
+            exe: &exe,
+            args: "",
+            cwd: &cwd,
+            config_file: Some(&config_path),
+        })?;
         self.db
             .upsert_config_file("nginx.conf", "nginx.conf", &config_path)?;
         self.db
@@ -1302,17 +1303,18 @@ impl RuntimeManager {
         let config_id = format!("php.ini:{}", service_id);
         let args = format!("-b 127.0.0.1:{}", port);
 
-        self.db.upsert_service_runtime(
-            &service_id,
-            &format!("PHP {} CGI", version),
-            "php",
-            "php-cgi.exe",
+        let name = format!("PHP {} CGI", version);
+        self.db.upsert_service_runtime(ServiceRuntimeRegistration {
+            id: &service_id,
+            name: &name,
+            service_type: "php",
+            process_name: "php-cgi.exe",
             port,
-            &php_cgi_path,
-            &args,
-            &cwd,
-            Some(&php_ini_path),
-        )?;
+            exe: &php_cgi_path,
+            args: &args,
+            cwd: &cwd,
+            config_file: Some(&php_ini_path),
+        })?;
         self.db
             .upsert_config_file(&config_id, &format!("php.ini ({})", version), &php_ini_path)?;
         self.db
@@ -1694,6 +1696,12 @@ impl DownloadProgress {
     }
 }
 
+impl Default for DownloadProgress {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1780,8 +1788,9 @@ mod tests {
 
         let config_files = db.list_config_files().expect("config files");
         assert!(config_files.iter().any(|file| {
-            file.id == "nginx.conf" && file.path.ends_with("conf\\nginx.conf")
-                || file.id == "nginx.conf" && file.path.ends_with("conf/nginx.conf")
+            file.id == "nginx.conf"
+                && (file.path.ends_with("conf\\nginx.conf")
+                    || file.path.ends_with("conf/nginx.conf"))
         }));
     }
 
