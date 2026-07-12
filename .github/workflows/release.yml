@@ -17,6 +17,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -36,6 +41,21 @@ jobs:
           if ("${{ github.ref_name }}" -ne $expected) {
             throw "Tag ${{ github.ref_name }} does not match application version $expected"
           }
+
+      - name: Restore bundled runtime resources
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "winserver-runtime-bundle-v1.zip"
+          $url = "https://github.com/beidaomitu233/winserver/releases/download/v1.0.0/winserver-runtime-bundle-v1.zip"
+          $expectedHash = "D267C58574B0BE74DE07FCA78F4E2CCA306ABA9CCAB2B60EEB5752B4371B892F"
+
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
+          if ($actualHash -ne $expectedHash) {
+            throw "Runtime bundle checksum mismatch: expected $expectedHash, got $actualHash"
+          }
+
+          Expand-Archive -LiteralPath $archive -DestinationPath runtime -Force
 
       - name: Run release checks
         run: |
