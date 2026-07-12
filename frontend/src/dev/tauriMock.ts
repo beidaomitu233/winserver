@@ -156,6 +156,22 @@ export function setupTauriDevMock() {
       return null
     }
 
+    if (cmd === 'plugin:app|version') return '1.0.0'
+    if (cmd === 'plugin:app|name') return 'WinServer'
+    if (cmd === 'plugin:updater|check') {
+      return {
+        rid: 100,
+        currentVersion: '1.0.0',
+        version: '1.1.0',
+        date: '2026-07-13T00:00:00Z',
+        body: '改进版本信息与自动更新体验。',
+        rawJson: {},
+      }
+    }
+    if (cmd === 'plugin:updater|download_and_install') return null
+    if (cmd === 'plugin:process|restart') return null
+    if (cmd === 'plugin:resources|close') return null
+
     if (cmd === 'plugin:dialog|open') return null
     if (cmd === 'app_init_status') return { phase: 'ready', ready: true }
     if (cmd === 'get_state') return cloneState()

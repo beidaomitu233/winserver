@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, inject } from 'vue'
+import { ref, onMounted, onUnmounted, inject } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useServiceStore } from '../stores/useServiceStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useDatabaseStore } from '../stores/useDatabaseStore'
+import { useUpdateStore } from '../stores/useUpdateStore'
 import { useToast } from '../composables/useToast'
 
 const icon = (name: string, cls = '') => `<svg class="icon ${cls}"><use href="#i-${name}"></use></svg>`
@@ -11,6 +12,7 @@ const icon = (name: string, cls = '') => `<svg class="icon ${cls}"><use href="#i
 const serviceStore = useServiceStore()
 const settingsStore = useSettingsStore()
 const databaseStore = useDatabaseStore()
+const updateStore = useUpdateStore()
 const openConfigEditor = inject<(fileId: string, label: string, filePath: string) => void>('openConfigEditor')!
 const openPortCheck = inject<() => void>('openPortCheck')!
 const { show } = useToast()
@@ -31,6 +33,7 @@ const menuItems: Array<[string, string, string]> = [
   ['network', '网络', 'network'],
   ['security', '安全', 'shield'],
   ['backup', '备份', 'backup'],
+  ['version', '版本', 'info'],
 ]
 
 const titleMap: Record<string, string> = {
@@ -38,6 +41,7 @@ const titleMap: Record<string, string> = {
   network: '端口与网络',
   security: '安全设置',
   backup: '备份策略',
+  version: '版本信息',
 }
 
 async function toggleAutostart() {
@@ -168,6 +172,11 @@ onMounted(() => {
   serviceStore.fetchState()
   settingsStore.fetchSettings()
   loadBackups()
+  void updateStore.initialize()
+})
+
+onUnmounted(() => {
+  if (saveTimer) window.clearTimeout(saveTimer)
 })
 </script>
 
@@ -380,6 +389,56 @@ onMounted(() => {
             </div>
           </div>
         </template>
+
+        <!-- Version & updater -->
+        <template v-else-if="activeSection === 'version'">
+          <div class="version-panel">
+            <img class="version-logo" src="/app-icon.png" alt="WinServer logo" />
+            <h2 class="version-name">WinServer</h2>
+            <div class="version-number">v{{ updateStore.currentVersion || '—' }}</div>
+            <p class="version-description">
+              Windows 本地 Web 服务与开发环境管理工具
+            </p>
+
+            <div class="update-status" :class="updateStore.status">
+              <svg class="icon icon-sm"><use :href="updateStore.status === 'error' ? '#i-alert' : '#i-refresh'" /></svg>
+              <span>{{ updateStore.statusText }}</span>
+            </div>
+
+            <div v-if="updateStore.status === 'downloading' || updateStore.status === 'installing'" class="update-progress">
+              <div class="update-progress-bar" :style="{ width: `${updateStore.progress}%` }" />
+            </div>
+
+            <div v-if="updateStore.status === 'available' && updateStore.releaseNotes" class="release-notes">
+              <div class="release-notes-title">v{{ updateStore.availableVersion }} 更新说明</div>
+              <div class="release-notes-body">{{ updateStore.releaseNotes }}</div>
+            </div>
+
+            <div class="version-actions">
+              <button
+                v-if="updateStore.status === 'available'"
+                class="btn primary"
+                :disabled="updateStore.isBusy"
+                @click="updateStore.installUpdate"
+              >
+                立即更新到 v{{ updateStore.availableVersion }}
+              </button>
+              <button
+                v-else
+                class="btn"
+                :disabled="updateStore.isBusy"
+                @click="updateStore.checkForUpdates"
+              >
+                {{ updateStore.status === 'checking' ? '检查中…' : '检查更新' }}
+              </button>
+            </div>
+
+            <div class="version-meta">
+              更新包会经过签名验证；安装时应用将自动重启。<br />
+              © 2026 WinServer. All rights reserved.
+            </div>
+          </div>
+        </template>
       </div>
     </div>
   </div>
@@ -401,5 +460,93 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+.version-panel {
+  min-height: 470px;
+  padding: 42px 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.version-logo {
+  width: 92px;
+  height: 92px;
+  border-radius: 22px;
+  box-shadow: 0 18px 44px rgba(30, 115, 255, 0.22);
+}
+.version-name {
+  margin: 18px 0 2px;
+  font-size: 27px;
+  letter-spacing: 0.2px;
+}
+.version-number {
+  color: var(--text-2);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.version-description {
+  margin: 14px 0 20px;
+  color: var(--text-3);
+  font-size: 13px;
+}
+.update-status {
+  min-height: 36px;
+  padding: 8px 13px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 13px;
+}
+.update-status.available {
+  color: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 34%, var(--line));
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface-2));
+}
+.update-status.error { color: var(--danger, #ef5a49); }
+.update-progress {
+  width: min(360px, 100%);
+  height: 6px;
+  margin-top: 14px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.update-progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width 180ms ease;
+}
+.release-notes {
+  width: min(480px, 100%);
+  margin-top: 16px;
+  padding: 13px 15px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.release-notes-title { font-weight: 600; font-size: 13px; }
+.release-notes-body {
+  margin-top: 7px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow: auto;
+}
+.version-actions { margin-top: 18px; }
+.version-meta {
+  margin-top: 20px;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.7;
 }
 </style>
