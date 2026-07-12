@@ -80,3 +80,12 @@ jobs:
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           args: --bundles nsis
+
+      - name: Normalize and validate updater manifest URLs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          & .github/scripts/normalize-updater-manifest.ps1 `
+            -Repository "${{ github.repository }}" `
+            -Tag "${{ github.ref_name }}"
