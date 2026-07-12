@@ -247,7 +247,8 @@ git push origin v1.1.1
 4. 编译 Windows NSIS 安装包；
 5. 使用 `TAURI_SIGNING_PRIVATE_KEY` 生成 updater 签名；
 6. 创建 GitHub Release；
-7. 上传安装包、签名和 `latest.json`。
+7. 上传安装包、签名和 `latest.json`；
+8. 将 manifest 中的 GitHub Asset API URL 规范化为可匿名下载的 `releases/download/<tag>/<installer>` URL，并执行 HTTP 校验。
 
 任务失败时不要手工上传一个未签名安装包冒充自动更新产物。修复原因后删除错误 tag/草稿 Release，再在正确提交上重新创建 tag，或者按版本策略发布新的 patch 版本。
 
@@ -264,6 +265,7 @@ git push origin v1.1.1
 - `version` 为 `1.1.1`
 - Windows x64 下载 URL 指向本次 Release
 - `signature` 非空
+- 每个平台的 `url` 使用 `https://github.com/<owner>/<repo>/releases/download/...`，不能是返回 JSON 元数据的 `https://api.github.com/repos/.../assets/...`
 - 更新说明与发布时间正确
 
 ### 第 11 步：用旧版本客户端验证更新
