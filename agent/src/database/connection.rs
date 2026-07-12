@@ -24,10 +24,10 @@ impl Database {
         let conn = Connection::open(path)?;
 
         // Set pragmas
-        conn.pragma_update(None, "foreign_keys", &"ON")?;
-        conn.pragma_update(None, "journal_mode", &"WAL")?;
-        conn.pragma_update(None, "busy_timeout", &5000)?;
-        conn.pragma_update(None, "synchronous", &"NORMAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "busy_timeout", 5000)?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -732,18 +732,7 @@ impl Database {
     }
 
     /// Upsert a concrete service runtime configuration created by local import.
-    pub fn upsert_service_runtime(
-        &self,
-        id: &str,
-        name: &str,
-        service_type: &str,
-        process_name: &str,
-        port: u16,
-        exe: &str,
-        args: &str,
-        cwd: &str,
-        config_file: Option<&str>,
-    ) -> anyhow::Result<()> {
+    pub fn upsert_service_runtime(&self, runtime: ServiceRuntimeRegistration<'_>) -> anyhow::Result<()> {
         self.conn(|conn| {
             let now = chrono::Utc::now().to_rfc3339();
             conn.execute(
@@ -767,15 +756,15 @@ impl Database {
                     error_message = NULL,
                     updated_at = excluded.updated_at",
                 rusqlite::params![
-                    id,
-                    name,
-                    service_type,
-                    process_name,
-                    port as i32,
-                    exe,
-                    args,
-                    cwd,
-                    config_file,
+                    runtime.id,
+                    runtime.name,
+                    runtime.service_type,
+                    runtime.process_name,
+                    runtime.port as i32,
+                    runtime.exe,
+                    runtime.args,
+                    runtime.cwd,
+                    runtime.config_file,
                     &now,
                     &now,
                 ],
@@ -1286,6 +1275,18 @@ impl Database {
 }
 
 /// Service configuration retrieved from the database.
+pub struct ServiceRuntimeRegistration<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub service_type: &'a str,
+    pub process_name: &'a str,
+    pub port: u16,
+    pub exe: &'a str,
+    pub args: &'a str,
+    pub cwd: &'a str,
+    pub config_file: Option<&'a str>,
+}
+
 pub struct ServiceConfig {
     pub id: String,
     pub exe: String,

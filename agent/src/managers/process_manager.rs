@@ -19,9 +19,9 @@ fn shell_words(s: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
-    let mut chars = s.chars().peekable();
+    let chars = s.chars();
 
-    while let Some(ch) = chars.next() {
+    for ch in chars {
         match ch {
             '"' => {
                 in_quotes = !in_quotes;
@@ -393,7 +393,7 @@ impl ProcessManager {
         let mut args: Vec<String> = config
             .args
             .as_deref()
-            .map(|s| shell_words(s))
+            .map(shell_words)
             .unwrap_or_default();
         let mut port = config.port;
         let mut cwd = config.cwd.clone().unwrap_or_else(|| {

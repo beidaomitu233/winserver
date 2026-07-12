@@ -948,6 +948,7 @@ fn validate_domain(domain: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::ServiceRuntimeRegistration;
     use std::fs;
     use std::net::TcpListener;
     use std::sync::Arc;
@@ -1035,33 +1036,34 @@ mod tests {
     }
 
     fn configure_nginx(db: &Database, root: &Path, exe: &Path, port: u16) {
-        db.upsert_service_runtime(
-            "nginx",
-            "Nginx Test",
-            "nginx",
-            "nginx.exe",
+        db.upsert_service_runtime(ServiceRuntimeRegistration {
+            id: "nginx",
+            name: "Nginx Test",
+            service_type: "nginx",
+            process_name: "nginx.exe",
             port,
-            &exe.to_string_lossy(),
-            "",
-            &root.to_string_lossy(),
-            Some(&root.join("conf").join("nginx.conf").to_string_lossy()),
-        )
+            exe: &exe.to_string_lossy(),
+            args: "",
+            cwd: &root.to_string_lossy(),
+            config_file: Some(&root.join("conf").join("nginx.conf").to_string_lossy()),
+        })
         .expect("upsert nginx");
     }
 
     fn configure_php_service(db: &Database, id: &str, node: &str, dir: &Path, port: u16) {
         let script = write_node_listener(dir, port);
-        db.upsert_service_runtime(
+        let args = format!("\"{}\"", script.to_string_lossy());
+        db.upsert_service_runtime(ServiceRuntimeRegistration {
             id,
-            "PHP Test CGI",
-            "php",
-            "php-cgi.exe",
+            name: "PHP Test CGI",
+            service_type: "php",
+            process_name: "php-cgi.exe",
             port,
-            node,
-            &format!("\"{}\"", script.to_string_lossy()),
-            &dir.to_string_lossy(),
-            Some(&dir.join("php.ini").to_string_lossy()),
-        )
+            exe: node,
+            args: &args,
+            cwd: &dir.to_string_lossy(),
+            config_file: Some(&dir.join("php.ini").to_string_lossy()),
+        })
         .expect("upsert php");
     }
 

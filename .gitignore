@@ -25,3 +25,7 @@ node_modules/
 npm-debug.log*
 .DS_Store
 Thumbs.db
+
+# Local updater signing private keys (public key is committed in tauri.conf.json)
+frontend/src-tauri/.tauri/*.key
+frontend/src-tauri/.tauri/*.key.pub

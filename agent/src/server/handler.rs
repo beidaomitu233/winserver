@@ -2492,7 +2492,7 @@ fn normalize_policy_id(raw: &str) -> String {
         "download" | "readonly" | "read-only" | "read" | "public-read" => "download".into(),
         "upload" | "write" | "writeonly" => "upload".into(),
         "none" | "private" | "deny" => "private".into(),
-        other if other.is_empty() => "private".into(),
+        "" => "private".into(),
         other => other.to_string(),
     }
 }
