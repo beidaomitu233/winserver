@@ -99,6 +99,18 @@ export interface AppState {
   system_settings: SystemSettings
 }
 
+export interface OperationLog {
+  id: number
+  action: string
+  target_type: string | null
+  target_id: string | null
+  success: boolean
+  error_code: string | null
+  message: string
+  details: { request?: Record<string, unknown> } | null
+  created_at: string
+}
+
 export interface PortCheckResult {
   port: number
   is_open: boolean

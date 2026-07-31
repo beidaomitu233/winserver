@@ -83,12 +83,22 @@ test.describe('Dashboard Page', () => {
   })
 
   test('Dashboard one-click start updates service state', async ({ page }) => {
+    const picker = page.locator('summary[aria-label="选择一键启动项"]')
+    await picker.click()
+    const redisOption = page.locator('.suite-picker-item').filter({ hasText: 'Redis' })
+    await redisOption.locator('input[type="checkbox"]').check()
+    await expect(redisOption.locator('input[type="checkbox"]')).toBeChecked()
+    await picker.click()
     await page.locator('button:has-text("一键启动")').first().click()
     await page.waitForTimeout(600)
-    const pillText = await page.locator('.home-state-pill').textContent().catch(() => '')
-    const updated = /5\s*项服务在线/.test(pillText || '')
-    await recordStep(page, P, 'One-click start state', updated, pillText || '')
-    expect(updated).toBeTruthy()
+    const redisCard = page.locator('.panel-app-card').filter({ hasText: 'Redis' })
+    await expect(redisCard.locator('.panel-app-state')).toContainText('运行中')
+
+    await page.reload()
+    await waitForAppReady(page)
+    await page.locator('summary[aria-label="选择一键启动项"]').click()
+    await expect(page.locator('.suite-picker-item').filter({ hasText: 'Redis' }).locator('input')).toBeChecked()
+    await recordStep(page, P, 'One-click start selection persists', true, 'Redis remains selected after reload')
   })
 
   test('Dashboard Redis config supports visual and file modes', async ({ page }) => {

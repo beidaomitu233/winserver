@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::path::{Path, PathBuf};
-use std::io::{Read, Seek, SeekFrom};
 use std::time::Instant;
 use serde_json::json;
 use tokio::sync::RwLock;
@@ -263,6 +262,10 @@ impl RequestHandler {
             }
         };
 
+        if let Err(audit_error) = self.record_request_audit(method, &params, &result) {
+            warn!("Failed to write operation audit for {}: {}", method, audit_error);
+        }
+
         match result {
             Ok(value) => JsonRpcResponse::success(&id, value),
             Err(e) => {
@@ -479,36 +482,20 @@ impl RequestHandler {
         let source = params["source"].as_str().unwrap_or("operation");
         let search = params["search"].as_str().unwrap_or("").trim();
 
-        if source == "operation" {
-            let mut logs = self.db.list_logs(200)?;
-            if !search.is_empty() {
-                logs.retain(|line| line.to_lowercase().contains(&search.to_lowercase()));
-            }
-            return Ok(json!({ "source": source, "logs": logs }));
+        if source != "operation" {
+            anyhow::bail!("仅支持操作日志");
         }
-
-        let path = self.resolve_log_path(source)?;
-        let logs = read_log_tail(&path, search, 256 * 1024)?;
-        Ok(json!({
-            "source": source,
-            "path": path.to_string_lossy(),
-            "logs": logs
-        }))
+        let logs = self.db.list_operation_logs(500, search)?;
+        Ok(json!({ "source": source, "logs": logs }))
     }
 
     async fn handle_log_clear(&self, params: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let source = params["source"].as_str().unwrap_or("operation");
-        if source == "operation" {
-            self.db.clear_logs()?;
-            return Ok(json!({ "message": "日志已清空" }));
+        if source != "operation" {
+            anyhow::bail!("仅支持操作日志");
         }
-
-        let path = self.resolve_log_path(source)?;
-        if !path.exists() {
-            anyhow::bail!("日志文件不存在：{}", path.display());
-        }
-        std::fs::write(&path, "")?;
-        Ok(json!({ "message": "日志已清空", "path": path.to_string_lossy() }))
+        self.db.clear_logs()?;
+        Ok(json!({ "message": "操作日志已清空" }))
     }
 
     async fn handle_settings_get(&self) -> anyhow::Result<serde_json::Value> {
@@ -669,13 +656,11 @@ impl RequestHandler {
             if let Some(port) = parsed.get("port").and_then(|value| value.as_u64()) {
                 let _ = self.db.update_service_port("redis", port as u16);
             }
-            let _ = self.db.add_log("config.save", "redis", true, "redis.conf 已通过文件编辑更新");
         } else if file_id == "minio.env" {
             let parsed = parse_minio_env(content, &path);
             if let Some(port) = parsed.get("api_port").and_then(|value| value.as_u64()) {
                 let _ = self.db.update_service_port("minio", port as u16);
             }
-            let _ = self.db.add_log("config.save", "minio", true, "minio.env 已通过文件编辑更新");
         }
 
         let state = self.build_app_state().await?;
@@ -713,7 +698,6 @@ impl RequestHandler {
 
         // Persist port back to the service instance so start checks the right port.
         let _ = self.db.update_service_port("redis", port);
-        let _ = self.db.add_log("config.save", "redis", true, "redis.conf 已通过可视化配置更新");
 
         let state = self.build_app_state().await?;
         Ok(json!({ "state": state, "message": "Redis 配置已保存" }))
@@ -811,7 +795,6 @@ impl RequestHandler {
         let _ = self.db.upsert_config_file("minio.env", "minio.env", &path);
 
         let _ = self.db.update_service_port("minio", api_port);
-        let _ = self.db.add_log("config.save", "minio", true, "minio.env 已通过可视化配置更新");
 
         let state = self.build_app_state().await?;
         Ok(json!({ "state": state, "message": "MinIO 配置已保存" }))
@@ -936,13 +919,6 @@ impl RequestHandler {
 
         let applied = fetch_bucket_anonymous_policy(mc, &host_env, bucket)
             .unwrap_or_else(|_| policy_id.to_string());
-
-        let _ = self.db.add_log(
-            "minio.policy",
-            "minio",
-            true,
-            &format!("桶 {} 权限已设为 {}（{}）", bucket, policy_label, applied),
-        );
 
         Ok(json!({
             "bucket": bucket,
@@ -1535,6 +1511,13 @@ impl RequestHandler {
         let auto = params["auto"].as_bool()
             .ok_or_else(|| anyhow::anyhow!("Missing auto"))?;
 
+        if auto && service_id.starts_with("mysql") {
+            for service in self.db.list_service_instances()? {
+                if service.id != service_id && service.id.starts_with("mysql") && service.auto {
+                    self.db.update_service_auto(&service.id, false)?;
+                }
+            }
+        }
         self.db.update_service_auto(service_id, auto)?;
 
         let state = self.build_app_state().await?;
@@ -1717,77 +1700,76 @@ impl RequestHandler {
         )
     }
 
-    fn resolve_log_path(&self, source: &str) -> anyhow::Result<std::path::PathBuf> {
-        match source {
-            "nginx_error" => {
-                let config = self.db.get_service_config("nginx")?;
-                let cwd = self.service_cwd(&config);
-                let logs_dir = cwd.join("logs");
-                let _ = std::fs::create_dir_all(&logs_dir);
-                let path = logs_dir.join("error.log");
-                if !path.exists() {
-                    let _ = std::fs::write(&path, "");
-                }
-                Ok(path)
+    fn record_request_audit(
+        &self,
+        method: &str,
+        params: &serde_json::Value,
+        result: &anyhow::Result<serde_json::Value>,
+    ) -> anyhow::Result<()> {
+        let log_success = matches!(
+            method,
+            "port.killProcess"
+                | "settings.update"
+                | "settings.paths"
+                | "hosts.sync"
+                | "hosts.remove"
+                | "config.save"
+                | "redis.config.save"
+                | "minio.config.save"
+                | "minio.bucket.setPolicy"
+                | "database.create"
+                | "database.delete"
+                | "database.changePassword"
+                | "database.rootPassword"
+                | "database.export"
+                | "database.import"
+                | "database.deleteBackup"
+                | "database.pgCreate"
+                | "service.toggleAuto"
+                | "software.detectLocal"
+        );
+        let log_failure = log_success
+            || matches!(
+                method,
+                "runtime.import"
+                    | "software.install"
+                    | "software.uninstall"
+                    | "software.downloadInstall"
+                    | "software.installBundled"
+            );
+
+        if (result.is_ok() && !log_success) || (result.is_err() && !log_failure) {
+            return Ok(());
+        }
+
+        let (target_type, target_id) = operation_target(method, params);
+        let details = json!({ "request": sanitize_audit_value(params) });
+        match result {
+            Ok(value) => {
+                let message = operation_success_message(method, params, value);
+                self.db.add_operation_log(
+                    method,
+                    Some(&target_type),
+                    target_id.as_deref(),
+                    true,
+                    None,
+                    &message,
+                    Some(&details),
+                )
             }
-            "nginx_access" => {
-                let config = self.db.get_service_config("nginx")?;
-                let cwd = self.service_cwd(&config);
-                let logs_dir = cwd.join("logs");
-                let _ = std::fs::create_dir_all(&logs_dir);
-                let path = logs_dir.join("access.log");
-                if !path.exists() {
-                    let _ = std::fs::write(&path, "");
-                }
-                Ok(path)
+            Err(error) => {
+                let message = redact_audit_message(&error.to_string(), params);
+                let (_, error_code) = classify_error(&message);
+                self.db.add_operation_log(
+                    method,
+                    Some(&target_type),
+                    target_id.as_deref(),
+                    false,
+                    Some(error_code),
+                    &message,
+                    Some(&details),
+                )
             }
-            "php_error" => {
-                let php = self
-                    .db
-                    .list_service_instances()?
-                    .into_iter()
-                    .find(|service| {
-                        service.installed
-                            && (service.service_type == "php"
-                                || service.service_type.starts_with("php")
-                                || service.id.starts_with("php"))
-                    })
-                    .ok_or_else(|| anyhow::anyhow!("没有已导入的 PHP 运行环境"))?;
-                let config = self.db.get_service_config(&php.id)?;
-                let cwd = self.service_cwd(&config);
-                let candidates = [
-                    cwd.join("logs").join("php_error.log"),
-                    cwd.join("logs").join("php_errors.log"),
-                    cwd.join("php_error.log"),
-                    cwd.join("php_errors.log"),
-                ];
-                Ok(candidates
-                    .iter()
-                    .find(|path| path.exists())
-                    .cloned()
-                    .unwrap_or_else(|| candidates[0].clone()))
-            }
-            "agent" => {
-                // Prefer runtime_manager data dir sibling (data/logs) via settings or local data
-                let settings = self.db.get_settings()?;
-                let data_dir = if settings.data_dir.is_empty() {
-                    // Use the same folder as the SQLite DB when possible
-                    std::env::current_exe()
-                        .ok()
-                        .and_then(|p| p.parent().map(|p| p.join("data")))
-                        .unwrap_or_else(|| std::path::PathBuf::from("data"))
-                } else {
-                    std::path::PathBuf::from(settings.data_dir)
-                };
-                let logs_dir = data_dir.join("logs");
-                let _ = std::fs::create_dir_all(&logs_dir);
-                let path = logs_dir.join("agent.log");
-                if !path.exists() {
-                    let _ = std::fs::write(&path, "");
-                }
-                Ok(path)
-            }
-            _ => anyhow::bail!("未知日志来源：{}", source),
         }
     }
 
@@ -1875,17 +1857,6 @@ impl RequestHandler {
             return Some(path);
         }
         None
-    }
-
-    fn service_cwd(&self, config: &crate::database::ServiceConfig) -> std::path::PathBuf {
-        let raw = config.cwd.clone().unwrap_or_else(|| {
-            Path::new(&config.exe)
-                .parent()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| ".".to_string())
-        });
-        let path = heal_deps_path(&raw).unwrap_or(raw);
-        std::path::PathBuf::from(path)
     }
 
     async fn build_app_state(&self) -> anyhow::Result<AppState> {
@@ -2046,6 +2017,148 @@ impl RequestHandler {
         Ok(json!({ "ok": true, "db": db_name }))
     }
 
+}
+
+fn operation_target(method: &str, params: &serde_json::Value) -> (String, Option<String>) {
+    let field = |name: &str| {
+        params
+            .get(name)
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+    };
+
+    if let Some(id) = field("serviceId") {
+        return ("service".to_string(), Some(id));
+    }
+    if let Some(id) = field("siteId") {
+        return ("site".to_string(), Some(id));
+    }
+    if let Some(id) = field("softwareId") {
+        return ("runtime".to_string(), Some(id));
+    }
+    if let Some(id) = field("fileId") {
+        return ("config".to_string(), Some(id));
+    }
+    if let Some(id) = field("db") {
+        return ("database".to_string(), Some(id));
+    }
+    if let Some(id) = field("bucket") {
+        return ("bucket".to_string(), Some(id));
+    }
+    if let Some(id) = field("domain") {
+        return ("hosts".to_string(), Some(id));
+    }
+    if let Some(path) = field("path") {
+        let name = Path::new(&path)
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or(path);
+        return ("file".to_string(), Some(name));
+    }
+    if let Some(pid) = params.get("pid").and_then(|value| value.as_u64()) {
+        return ("process".to_string(), Some(pid.to_string()));
+    }
+
+    let target_type = method.split('.').next().unwrap_or("system");
+    (target_type.to_string(), Some("system".to_string()))
+}
+
+fn operation_success_message(
+    method: &str,
+    params: &serde_json::Value,
+    result: &serde_json::Value,
+) -> String {
+    if method == "service.toggleAuto" {
+        return if params.get("auto").and_then(|value| value.as_bool()).unwrap_or(false) {
+            "已加入一键启动".to_string()
+        } else {
+            "已从一键启动移除".to_string()
+        };
+    }
+    result
+        .get("message")
+        .and_then(|value| value.as_str())
+        .unwrap_or("操作已完成")
+        .to_string()
+}
+
+fn sanitize_audit_value(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(values) => {
+            let sanitized = values
+                .iter()
+                .map(|(key, value)| {
+                    let normalized = key.to_lowercase().replace(['_', '-'], "");
+                    let value = if is_sensitive_audit_key(&normalized) {
+                        json!("[REDACTED]")
+                    } else if normalized == "content" {
+                        json!(format!(
+                            "[{} characters]",
+                            value.as_str().map(|text| text.chars().count()).unwrap_or(0)
+                        ))
+                    } else {
+                        sanitize_audit_value(value)
+                    };
+                    (key.clone(), value)
+                })
+                .collect();
+            serde_json::Value::Object(sanitized)
+        }
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values.iter().take(20).map(sanitize_audit_value).collect(),
+        ),
+        serde_json::Value::String(value) => {
+            let truncated = value.chars().take(500).collect::<String>();
+            serde_json::Value::String(truncated)
+        }
+        _ => value.clone(),
+    }
+}
+
+fn is_sensitive_audit_key(normalized: &str) -> bool {
+    normalized.ends_with("pass")
+        || normalized == "key"
+        || normalized == "authorization"
+        || normalized == "cookie"
+        || normalized == "session"
+        || normalized.contains("password")
+        || normalized.contains("secret")
+        || normalized.contains("token")
+        || normalized.contains("credential")
+        || normalized.ends_with("apikey")
+        || normalized.ends_with("accesskey")
+        || normalized.ends_with("privatekey")
+}
+
+fn collect_audit_secrets(value: &serde_json::Value, secrets: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(values) => {
+            for (key, value) in values {
+                let normalized = key.to_lowercase().replace(['_', '-'], "");
+                if is_sensitive_audit_key(&normalized) || normalized == "content" {
+                    if let Some(secret) = value.as_str().filter(|secret| !secret.is_empty()) {
+                        secrets.push(secret.to_string());
+                    }
+                } else {
+                    collect_audit_secrets(value, secrets);
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_audit_secrets(value, secrets);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn redact_audit_message(message: &str, params: &serde_json::Value) -> String {
+    let mut secrets = Vec::new();
+    collect_audit_secrets(params, &mut secrets);
+    let secret_refs = secrets.iter().map(String::as_str).collect::<Vec<_>>();
+    redact_secret(message, &secret_refs)
 }
 
 fn classify_error(message: &str) -> (i32, &'static str) {
@@ -2568,69 +2681,20 @@ fn summarize_mc_error(msg: &str) -> String {
     }
 }
 
-fn read_log_tail(path: &Path, search: &str, max_bytes: u64) -> anyhow::Result<Vec<String>> {
-    if !path.exists() {
-        return Ok(vec![format!("日志文件不存在：{}", path.display())]);
-    }
-
-    let mut file = std::fs::File::open(path)?;
-    let len = file.metadata()?.len();
-    let start = len.saturating_sub(max_bytes);
-    file.seek(SeekFrom::Start(start))?;
-
-    let mut content = String::new();
-    file.read_to_string(&mut content)?;
-    if start > 0 {
-        if let Some(index) = content.find('\n') {
-            content = content[index + 1..].to_string();
-        }
-    }
-
-    let search_lower = search.to_lowercase();
-    let mut lines = content
-        .lines()
-        .filter(|line| search_lower.is_empty() || line.to_lowercase().contains(&search_lower))
-        .map(|line| line.to_string())
-        .collect::<Vec<_>>();
-
-    if lines.len() > 500 {
-        lines = lines.split_off(lines.len() - 500);
-    }
-
-    Ok(lines)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         classify_error, ensure_child_file, minio_policy_label, mysql_password_arg,
         normalize_minio_policy, normalize_policy_id, parse_minio_env, parse_redis_conf,
-        prefer_bundled_runtime, quote_mysql_ident, quote_mysql_string, read_log_tail, redact_secret,
-        render_minio_env, render_redis_conf, resolve_mysql_tools_from_config,
-        should_skip_local_service_registration, validate_minio_bucket_name,
+        prefer_bundled_runtime, quote_mysql_ident, quote_mysql_string, redact_secret,
+        redact_audit_message, render_minio_env, render_redis_conf,
+        resolve_mysql_tools_from_config, sanitize_audit_value, should_skip_local_service_registration,
+        validate_minio_bucket_name,
         validate_mysql_identifier,
     };
     use std::collections::HashSet;
     use std::fs;
     use uuid::Uuid;
-
-    #[test]
-    fn read_log_tail_filters_and_limits_large_files() {
-        let path = std::env::temp_dir().join(format!("winserver-log-{}.log", Uuid::new_v4()));
-        let mut content = String::new();
-        for index in 0..1200 {
-            let kind = if index % 100 == 0 { "ERROR" } else { "INFO" };
-            content.push_str(&format!("{} line {}\n", kind, index));
-        }
-        fs::write(&path, content).expect("write log");
-
-        let filtered = read_log_tail(&path, "ERROR", 128 * 1024).expect("read log");
-        assert!(filtered.iter().all(|line| line.contains("ERROR")));
-        assert!(filtered.len() <= 500);
-
-        let missing = read_log_tail(&path.with_extension("missing"), "", 128).expect("missing log");
-        assert!(missing[0].contains("日志文件不存在"));
-    }
 
     #[test]
     fn core_services_prefer_packaged_bundles_over_external_dirs() {
@@ -2704,6 +2768,47 @@ mod tests {
         assert_eq!(code, "PORT_OCCUPIED");
         let message = redact_secret("using password abc123 failed", &["abc123"]);
         assert_eq!(message, "using password *** failed");
+    }
+
+    #[test]
+    fn audit_details_redact_secrets_and_summarize_config_content() {
+        let sanitized = sanitize_audit_value(&serde_json::json!({
+            "db": "app_db",
+            "pass": "database-secret",
+            "currentPass": "current-secret",
+            "root_password": "root-secret",
+            "api_key": "api-secret",
+            "authorization": "Bearer session-secret",
+            "content": "port 6379\nrequirepass secret",
+        }));
+
+        assert_eq!(sanitized["db"], "app_db");
+        assert_eq!(sanitized["pass"], "[REDACTED]");
+        assert_eq!(sanitized["currentPass"], "[REDACTED]");
+        assert_eq!(sanitized["root_password"], "[REDACTED]");
+        assert_eq!(sanitized["api_key"], "[REDACTED]");
+        assert_eq!(sanitized["authorization"], "[REDACTED]");
+        assert_eq!(sanitized["content"], "[28 characters]");
+        let raw = sanitized.to_string();
+        assert!(!raw.contains("database-secret"));
+        assert!(!raw.contains("current-secret"));
+        assert!(!raw.contains("root-secret"));
+        assert!(!raw.contains("session-secret"));
+        assert!(!raw.contains("requirepass"));
+    }
+
+    #[test]
+    fn audit_error_messages_redact_secrets_from_request() {
+        let params = serde_json::json!({
+            "password": "database-secret",
+            "nested": { "access_key": "access-secret" },
+        });
+        let message = redact_audit_message(
+            "database-secret failed while using access-secret",
+            &params,
+        );
+
+        assert_eq!(message, "*** failed while using ***");
     }
 
     #[test]

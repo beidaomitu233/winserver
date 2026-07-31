@@ -3,8 +3,8 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use shared::types::{
-    ConfigFileInfo, DatabaseInfo, RuntimeManifest, RuntimeType, ServiceInfo, ServiceState,
-    SiteInfo, SoftwareInfo, SystemSettings,
+    ConfigFileInfo, DatabaseInfo, OperationLog, RuntimeManifest, RuntimeType, ServiceInfo,
+    ServiceState, SiteInfo, SoftwareInfo, SystemSettings,
 };
 
 pub struct Database {
@@ -132,7 +132,7 @@ impl Database {
 
             let rows = stmt.query_map([limit as i32], |row| {
                 let action: String = row.get(0)?;
-                let target_id: String = row.get(1)?;
+                let target_id: String = row.get::<_, Option<String>>(1)?.unwrap_or_default();
                 let success: bool = row.get::<_, i32>(2)? != 0;
                 let error_code: Option<String> = row.get(3)?;
                 let message: String = row.get(4)?;
@@ -149,6 +149,56 @@ impl Database {
             let mut logs = Vec::new();
             for row in rows {
                 logs.push(row?);
+            }
+            Ok(logs)
+        })
+    }
+
+    pub fn list_operation_logs(
+        &self,
+        limit: usize,
+        search: &str,
+    ) -> anyhow::Result<Vec<OperationLog>> {
+        self.conn(|conn| {
+            let search = search.trim().to_lowercase();
+            let scan_limit = if search.is_empty() { limit } else { 5000 };
+            let mut stmt = conn.prepare(
+                "SELECT id, action, target_type, target_id, success, error_code, message, details_json, created_at
+                 FROM operation_logs
+                 ORDER BY id DESC
+                 LIMIT ?1",
+            )?;
+
+            let rows = stmt.query_map([scan_limit as i64], |row| {
+                let details_json: Option<String> = row.get(7)?;
+                Ok(OperationLog {
+                    id: row.get(0)?,
+                    action: row.get(1)?,
+                    target_type: row.get(2)?,
+                    target_id: row.get(3)?,
+                    success: row.get::<_, i32>(4)? != 0,
+                    error_code: row.get(5)?,
+                    message: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                    details: details_json
+                        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok()),
+                    created_at: row.get(8)?,
+                })
+            })?;
+
+            let mut logs = Vec::new();
+            for row in rows {
+                let log = row?;
+                if search.is_empty()
+                    || serde_json::to_string(&log)
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .contains(&search)
+                {
+                    logs.push(log);
+                    if logs.len() >= limit {
+                        break;
+                    }
+                }
             }
             Ok(logs)
         })
@@ -364,18 +414,50 @@ impl Database {
     }
 
     pub fn add_log(&self, action: &str, target_id: &str, success: bool, message: &str) -> anyhow::Result<()> {
+        let target_type = action.split('.').next().filter(|value| !value.is_empty());
+        self.add_operation_log(
+            action,
+            target_type,
+            Some(target_id),
+            success,
+            None,
+            message,
+            None,
+        )
+    }
+
+    pub fn add_operation_log(
+        &self,
+        action: &str,
+        target_type: Option<&str>,
+        target_id: Option<&str>,
+        success: bool,
+        error_code: Option<&str>,
+        message: &str,
+        details: Option<&serde_json::Value>,
+    ) -> anyhow::Result<()> {
         self.conn(|conn| {
             let now = chrono::Utc::now().to_rfc3339();
+            let details_json = details.map(serde_json::to_string).transpose()?;
             conn.execute(
-                "INSERT INTO operation_logs (action, target_id, success, error_code, message, created_at)
-                 VALUES (?1, ?2, ?3, NULL, ?4, ?5)",
+                "INSERT INTO operation_logs
+                 (action, target_type, target_id, success, error_code, message, details_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 rusqlite::params![
                     action,
+                    target_type,
                     target_id,
                     success as i32,
+                    error_code,
                     message,
+                    details_json,
                     &now,
                 ],
+            )?;
+            conn.execute(
+                "DELETE FROM operation_logs
+                 WHERE id NOT IN (SELECT id FROM operation_logs ORDER BY id DESC LIMIT 5000)",
+                [],
             )?;
             Ok(())
         })

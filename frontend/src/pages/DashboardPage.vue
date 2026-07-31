@@ -5,7 +5,7 @@ import { useSiteStore } from '../stores/useSiteStore'
 import { useDatabaseStore } from '../stores/useDatabaseStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { getServiceMeta, statusText, stateToStatus } from '../types'
-import type { SystemResource } from '../types'
+import type { ServiceInfo, SystemResource } from '../types'
 
 const icon = (name: string, cls = '') => `<svg class="icon ${cls}"><use href="#i-${name}"></use></svg>`
 
@@ -49,6 +49,8 @@ const runningCount = computed(() => dashboardServices.value.filter(s => s.state 
 const siteCount = computed(() => siteStore.sites.length)
 const dbCount = computed(() => databaseStore.databases.length)
 const installedApps = computed(() => dashboardServices.value.filter(s => s.installed))
+const startupCandidates = computed(() => serviceStore.services.filter(s => s.installed))
+const selectedStartupCount = computed(() => startupCandidates.value.filter(s => s.auto).length)
 
 const activeMysql = computed(() => {
   const mysqls = dashboardServices.value.filter(s => s.id.startsWith('mysql') && s.installed)
@@ -140,6 +142,23 @@ async function startAll() {
   }
 }
 
+async function toggleStartupService(service: ServiceInfo) {
+  const next = !service.auto
+  try {
+    if (next && service.id.startsWith('mysql')) {
+      const otherMysql = startupCandidates.value.filter(
+        item => item.id !== service.id && item.id.startsWith('mysql') && item.auto,
+      )
+      for (const item of otherMysql) {
+        await serviceStore.toggleAuto(item.id, false)
+      }
+    }
+    await serviceStore.toggleAuto(service.id, next)
+  } catch (e) {
+    console.error(e)
+  }
+}
+
 async function toggleService(id: string) {
   const svc = serviceStore.services.find(s => s.id === id)
   if (!svc) return
@@ -181,10 +200,39 @@ onMounted(async () => {
           <h1 class="panel-title">WinServer 控制台</h1>
         </div>
         <div class="panel-overview-actions">
-          <button class="btn primary" :disabled="serviceStore.suiteLoading" @click="startAll">
-            <svg class="icon icon-sm"><use href="#i-play" /></svg>
-            {{ serviceStore.suiteLoading ? '启动中' : '一键启动' }}
-          </button>
+          <div class="suite-control">
+            <button
+              class="btn primary"
+              :disabled="serviceStore.suiteLoading || selectedStartupCount === 0"
+              :title="selectedStartupCount === 0 ? '请先选择启动项' : `启动 ${selectedStartupCount} 项服务`"
+              @click="startAll"
+            >
+              <svg class="icon icon-sm"><use href="#i-play" /></svg>
+              {{ serviceStore.suiteLoading ? '启动中' : '一键启动' }}
+            </button>
+            <details class="suite-picker">
+              <summary class="btn-icon" title="选择一键启动项" aria-label="选择一键启动项">
+                <svg class="icon"><use href="#i-sliders" /></svg>
+              </summary>
+              <div class="suite-picker-menu">
+                <div class="suite-picker-head">
+                  <strong>一键启动项</strong>
+                  <span>已选 {{ selectedStartupCount }} 项</span>
+                </div>
+                <label v-for="svc in startupCandidates" :key="`startup-${svc.id}`" class="suite-picker-item">
+                  <input
+                    type="checkbox"
+                    :checked="svc.auto"
+                    :disabled="serviceStore.isServiceBusy(svc.id)"
+                    @change="toggleStartupService(svc)"
+                  />
+                  <span>{{ svc.name }}</span>
+                  <small>{{ svc.port || '—' }}</small>
+                </label>
+                <div v-if="startupCandidates.length === 0" class="suite-picker-empty">暂无已安装服务</div>
+              </div>
+            </details>
+          </div>
         </div>
       </div>
       <div class="panel-kpi-grid">
@@ -360,6 +408,48 @@ onMounted(async () => {
 }
 .panel-title { margin: 0; font-size: 17px; font-weight: 780; }
 .panel-overview-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.suite-control { display: flex; align-items: center; gap: 6px; }
+.suite-picker { position: relative; }
+.suite-picker > summary { list-style: none; cursor: pointer; }
+.suite-picker > summary::-webkit-details-marker { display: none; }
+.suite-picker[open] > summary { background: var(--surface-hover); color: var(--primary); }
+.suite-picker-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 260px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-solid);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, .16);
+}
+.suite-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.suite-picker-head strong { font-size: 13px; }
+.suite-picker-head span { color: var(--text-3); font-size: 11px; }
+.suite-picker-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.suite-picker-item:hover { background: var(--surface-hover); }
+.suite-picker-item input { width: 15px; height: 15px; margin: 0; accent-color: var(--primary); }
+.suite-picker-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suite-picker-item small { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.suite-picker-empty { padding: 18px 8px; text-align: center; color: var(--text-3); font-size: 12px; }
 .panel-kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
 .panel-kpi {
   text-align: left; border: 0; border-radius: 10px;

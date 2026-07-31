@@ -2,8 +2,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useDatabaseStore } from '../stores/useDatabaseStore'
+import { useToast } from '../composables/useToast'
 
 const databaseStore = useDatabaseStore()
+const { show } = useToast()
 const searchQuery = ref('')
 
 // Modal states
@@ -197,6 +199,31 @@ function passwordDisplay(db: { name: string; password?: string }) {
   return '••••••••'
 }
 
+async function copyDatabaseInfo(db: { name: string; user: string; password?: string }) {
+  const pass = db.password ?? ''
+  const text = `数据库名：${db.name}\n用户名：${db.user}\n密码：${pass}`
+  try {
+    await navigator.clipboard.writeText(text)
+    show('复制成功', '数据库信息已复制到剪贴板', 'success')
+  } catch {
+    // Fallback for non-secure context or Tauri webview
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      const copied = document.execCommand('copy')
+      if (!copied) throw new Error('copy command was rejected')
+      show('复制成功', '数据库信息已复制到剪贴板', 'success')
+    } catch {
+      show('复制失败', '请手动复制', 'error')
+    }
+    document.body.removeChild(textarea)
+  }
+}
+
 onMounted(() => {
   databaseStore.fetchState()
 })
@@ -257,6 +284,9 @@ onMounted(() => {
               <td>{{ db.size || '—' }}</td>
               <td>
                 <div class="table-actions">
+                  <button class="btn small" type="button" title="复制数据库信息" @click="copyDatabaseInfo(db)">
+                    <svg class="icon icon-sm"><use href="#i-copy" /></svg>复制
+                  </button>
                   <button class="btn small" @click="openPasswordModal(db.name, db.user)">改密</button>
                   <button class="btn small" :disabled="isExporting" @click="handleExport(db.name)">
                     {{ isExporting ? '导出中…' : '导出' }}
