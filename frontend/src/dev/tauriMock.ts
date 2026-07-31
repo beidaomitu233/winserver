@@ -1,5 +1,5 @@
 import { mockConvertFileSrc, mockIPC, mockWindows } from '@tauri-apps/api/mocks'
-import type { AppState, ServiceInfo, ServiceState, SoftwareInfo, SystemSettings } from '../types'
+import type { AppState, OperationLog, ServiceInfo, ServiceState, SoftwareInfo, SystemSettings } from '../types'
 
 const services: ServiceInfo[] = [
   service('nginx', 'Nginx', 'nginx', 80, true, 'running', 'D:\\WinServer\\runtime\\nginx\\conf\\nginx.conf'),
@@ -76,6 +76,42 @@ const state: AppState = {
   ],
   system_settings: settings,
 }
+
+let operationLogs: OperationLog[] = [
+  {
+    id: 3,
+    action: 'database.create',
+    target_type: 'database',
+    target_id: 'app_demo',
+    success: true,
+    error_code: null,
+    message: '数据库 app_demo 已创建',
+    details: { request: { db: 'app_demo', user: 'app_demo', pass: '[REDACTED]' } },
+    created_at: '2026-06-15T09:10:05Z',
+  },
+  {
+    id: 2,
+    action: 'site.create',
+    target_type: 'site',
+    target_id: 'localhost',
+    success: true,
+    error_code: null,
+    message: '站点已创建，端口 80，类型 PHP',
+    details: null,
+    created_at: '2026-06-15T09:10:03Z',
+  },
+  {
+    id: 1,
+    action: 'service.start',
+    target_type: 'service',
+    target_id: 'nginx',
+    success: true,
+    error_code: null,
+    message: '服务已启动，PID 1080，端口 80',
+    details: null,
+    created_at: '2026-06-15T09:10:00Z',
+  },
+]
 
 const configText: Record<string, string> = {
   'redis.conf': '# Redis configuration\nport 6379\nbind 127.0.0.1\nprotected-mode yes\nmaxmemory 256mb\n',
@@ -188,9 +224,15 @@ export function setupTauriDevMock() {
         uptime_seconds: 4820,
       }
     }
-    if (cmd === 'get_logs') return { logs: [...state.logs], path: 'D:\\WinServer\\logs\\operation.log' }
+    if (cmd === 'get_logs') {
+      const query = String(payload.search || '').toLowerCase()
+      const logs = query
+        ? operationLogs.filter(log => JSON.stringify(log).toLowerCase().includes(query))
+        : operationLogs
+      return { source: 'operation', logs: structuredClone(logs) }
+    }
     if (cmd === 'clear_logs') {
-      state.logs = []
+      operationLogs = []
       return { ok: true }
     }
     if (cmd === 'update_settings') {
@@ -211,10 +253,10 @@ export function setupTauriDevMock() {
       return { state: cloneState() }
     }
     if (cmd === 'suite_start') {
-      state.services.filter(svc => svc.installed).forEach(svc => setServiceState(svc.id, 'running'))
+      state.services.filter(svc => svc.installed && svc.auto).forEach(svc => setServiceState(svc.id, 'running'))
       return {
         state: cloneState(),
-        summary: state.services.filter(svc => svc.installed).map(svc => ({
+        summary: state.services.filter(svc => svc.installed && svc.auto).map(svc => ({
           serviceId: svc.id,
           name: svc.name,
           status: 'success',

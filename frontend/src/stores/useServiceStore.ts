@@ -144,11 +144,16 @@ export const useServiceStore = defineStore('services', () => {
   }
 
   async function toggleAuto(serviceId: string, auto: boolean) {
+    setServiceLoading(serviceId, true)
     try {
       const result = await invoke<{ state: AppState }>('service_toggle_auto', { serviceId, auto })
       if (result.state) services.value = result.state.services
     } catch (e) {
       console.error('Failed to toggle auto:', e)
+      show('启动项保存失败', readableError(e), 'error')
+      throw e
+    } finally {
+      setServiceLoading(serviceId, false)
     }
   }
 

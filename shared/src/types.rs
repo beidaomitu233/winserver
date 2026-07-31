@@ -117,6 +117,20 @@ pub struct AppState {
     pub version: String,
 }
 
+/// Structured audit entry returned by `log.list`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperationLog {
+    pub id: i64,
+    pub action: String,
+    pub target_type: Option<String>,
+    pub target_id: Option<String>,
+    pub success: bool,
+    pub error_code: Option<String>,
+    pub message: String,
+    pub details: Option<serde_json::Value>,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseInfo {
     pub name: String,
