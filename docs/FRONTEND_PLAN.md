@@ -81,7 +81,7 @@ frontend/src/
 
 | 页面 | 核心功能 | 主要接口 |
 | --- | --- | --- |
-| 首页 | 服务大卡片、启动/停止/重启、启动全部/停止全部、快捷入口、最近错误 | `state.get`、`service.start`、`service.stop`、`service.restart`、`suite.start`、`suite.stop` |
+| 首页 | 服务大卡片、启动/停止/重启、启动全部/停止全部、快捷入口、最近错误；MinIO 桶权限与连接信息复制 | `state.get`、`service.start`、`service.stop`、`service.restart`、`suite.start`、`suite.stop`、`minio.buckets.list` |
 | 软件 | 软件列表、检测本机、导入、bundled 安装、下载、删除 | `software.detectLocal`、`runtime.import`、`software.installBundled`、`software.downloadInstall`、`software.uninstall` |
 | 网站 | 站点列表、新建、编辑、启用、停用、删除、打开、配置、切 PHP | `site.create`、`site.update`、`site.enable`、`site.disable`、`site.delete`、`site.switchPhp` |
 | 日志 | 结构化操作记录、搜索、结果筛选、自动刷新、清空 | `log.list`、`log.clear` |

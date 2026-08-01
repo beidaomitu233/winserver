@@ -119,6 +119,23 @@ test.describe('Dashboard Page', () => {
     await closeModal(page)
   })
 
+  test('MinIO bucket information copies as connection template', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+    const minioCard = page.locator('.panel-app-card').filter({ hasText: 'MinIO' })
+    await minioCard.locator('.panel-app-actions .btn.ghost').click()
+    const modal = await waitForModal(page)
+    const copyButtons = modal.locator('button[title="复制桶信息"]')
+    const copyCount = await copyButtons.count()
+    expect(copyCount).toBeGreaterThan(0)
+    await copyButtons.nth(0).click()
+    const clipboard = await page.evaluate(() => navigator.clipboard.readText())
+    expect(clipboard).toContain('桶名称：demo-public')
+    expect(clipboard).toContain('访问地址：http://127.0.0.1:9000/demo-public')
+    expect(clipboard).toContain('用户名：minioadmin')
+    await recordStep(page, P, 'Copy MinIO bucket template', true, clipboard.replaceAll('\n', ' | '))
+    await closeModal(page)
+  })
+
   test('Dashboard port quick action checks availability', async ({ page }) => {
     await page.locator('.home-quick').filter({ hasText: '端口' }).click()
     const modal = await waitForModal(page)

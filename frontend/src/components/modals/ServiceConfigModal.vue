@@ -387,6 +387,42 @@ async function loadMinioBuckets() {
   }
 }
 
+async function copyBucketInfo(bucket: { name: string; policy: string; policy_label: string; url: string }) {
+  const apiUrl = minioInfo.value.api_url || minioLiveApiUrl.value
+  const bucketUrl = bucket.url || `${apiUrl.replace(/\/$/, '')}/${bucket.name}`
+  const text = [
+    `桶名称：${bucket.name}`,
+    `访问地址：${bucketUrl}`,
+    `权限：${bucket.policy_label || policyLabel(bucket.policy)}`,
+    `MinIO 地址：${apiUrl}`,
+    `用户名：${minioForm.value.root_user}`,
+    `密码：${minioForm.value.root_password}`,
+  ].join('\n')
+
+  try {
+    await navigator.clipboard?.writeText(text)
+    show('复制成功', '桶连接信息已复制到剪贴板', 'success')
+    return
+  } catch {
+    // Fallback for non-secure context or Tauri webview.
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  try {
+    textarea.select()
+    if (!document.execCommand('copy')) throw new Error('copy command was rejected')
+    show('复制成功', '桶连接信息已复制到剪贴板', 'success')
+  } catch {
+    show('复制失败', '请手动复制', 'error')
+  } finally {
+    document.body.removeChild(textarea)
+  }
+}
+
 async function setBucketPolicy(bucket: string, policy: string) {
   if (!bucket || minioPolicyBusy.value) return
   minioPolicyBusy.value = `${bucket}:${policy}`
@@ -575,22 +611,32 @@ const minioLiveConsoleUrl = computed(() =>
               <div v-else class="bucket-list">
                 <div v-for="b in minioBuckets" :key="b.name" class="bucket-row">
                   <div class="bucket-name">{{ b.name }}</div>
-                  <div class="policy-seg" role="group" :aria-label="`${b.name} 权限`">
+                  <div class="bucket-actions">
+                    <div class="policy-seg" role="group" :aria-label="`${b.name} 权限`">
+                      <button
+                        v-for="opt in minioPolicyOptions"
+                        :key="opt.id"
+                        type="button"
+                        class="policy-seg-btn"
+                        :class="{
+                          active: normalizePolicy(b.policy) === opt.id,
+                          busy: minioPolicyBusy === `${b.name}:${opt.id}`,
+                          [opt.tone]: true,
+                        }"
+                        :disabled="!!minioPolicyBusy"
+                        :title="opt.desc"
+                        @click="setBucketPolicy(b.name, opt.id)"
+                      >
+                        {{ minioPolicyBusy === `${b.name}:${opt.id}` ? '…' : opt.short }}
+                      </button>
+                    </div>
                     <button
-                      v-for="opt in minioPolicyOptions"
-                      :key="opt.id"
                       type="button"
-                      class="policy-seg-btn"
-                      :class="{
-                        active: normalizePolicy(b.policy) === opt.id,
-                        busy: minioPolicyBusy === `${b.name}:${opt.id}`,
-                        [opt.tone]: true,
-                      }"
-                      :disabled="!!minioPolicyBusy"
-                      :title="opt.desc"
-                      @click="setBucketPolicy(b.name, opt.id)"
+                      class="btn small bucket-copy"
+                      title="复制桶信息"
+                      @click="copyBucketInfo(b)"
                     >
-                      {{ minioPolicyBusy === `${b.name}:${opt.id}` ? '…' : opt.short }}
+                      <svg class="icon icon-sm"><use href="#i-copy" /></svg>复制
                     </button>
                   </div>
                 </div>
@@ -870,6 +916,13 @@ const minioLiveConsoleUrl = computed(() =>
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.bucket-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.bucket-copy { white-space: nowrap; }
 
 /* Segmented control for the three policies */
 .policy-seg {
