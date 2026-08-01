@@ -1,17 +1,43 @@
-/** WinServer E2E - Logs Page */
+/** WinServer E2E - Operation Logs Page */
 
 import { test, expect } from '@playwright/test'
-import { recordStep, navigateToPage, waitForAppReady, assertElementVisible, clickAndRecord, fillAndRecord, checkForToast, ensureDirs } from '../helpers'
+import { recordStep, navigateToPage, waitForAppReady, assertElementVisible, fillAndRecord, ensureDirs } from '../helpers'
 
 const P = 'Logs'
 
 test.describe('Logs Page', () => {
-  test.beforeEach(async ({ page }) => { ensureDirs(); await page.goto('/'); await waitForAppReady(page); await navigateToPage(page, 'logs'); await page.waitForTimeout(800) })
-  test('Logs loads', async ({ page }) => { await assertElementVisible(page, P, '.page-title', 'Title') })
-  test('Logs source tabs', async ({ page }) => { const tabs = page.locator('.tab'); const count = await tabs.count(); await recordStep(page, P, 'Tabs', count > 0, 'Found ' + count); for (let i = 0; i < Math.min(count, 5); i++) { await tabs.nth(i).click(); await page.waitForTimeout(300) } })
-  test('Logs display area', async ({ page }) => { const term = page.locator('.terminal-body'); const v = await term.isVisible().catch(() => false); await recordStep(page, P, 'Terminal', v, v ? 'Visible' : 'Missing') })
-  test('Logs auto-refresh toggle', async ({ page }) => { const btn = page.locator('button').filter({ hasText: /自动刷新|手动刷新/ }).first(); const e = await btn.isVisible().catch(() => false); await recordStep(page, P, 'Auto-refresh', e, e ? 'Found' : 'Missing'); if (e) { await btn.click(); await page.waitForTimeout(200); await btn.click() } })
-  test('Logs manual refresh', async ({ page }) => { const btn = page.locator('.page-actions button').filter({ hasText: /^刷新$/ }).first(); if (await btn.isVisible().catch(() => false)) { await btn.click(); await page.waitForTimeout(500); await recordStep(page, P, 'Refreshed', true, 'OK') } })
-  test('Logs search', async ({ page }) => { await fillAndRecord(page, P, '.search-box input', 'error', 'Search'); await page.keyboard.press('Enter'); await page.waitForTimeout(500); await page.locator('.search-box input').clear() })
-  test('Logs clear button', async ({ page }) => { const btn = page.locator('button.btn.danger').first(); const e = await btn.isVisible().catch(() => false); await recordStep(page, P, 'Clear button', e, e ? 'Found' : 'Missing') })
+  test.beforeEach(async ({ page }) => {
+    ensureDirs()
+    await page.goto('/')
+    await waitForAppReady(page)
+    await navigateToPage(page, 'logs')
+    await page.waitForTimeout(300)
+  })
+
+  test('Only structured operation logs are shown', async ({ page }) => {
+    await expect(page.locator('.page-title')).toHaveText('操作日志')
+    await expect(page.locator('.tabs, .terminal-body')).toHaveCount(0)
+    await expect(page.locator('.operation-row')).toHaveCount(3)
+    await assertElementVisible(page, P, '.operation-details', 'Structured request details')
+    await expect(page.locator('.operation-list')).not.toContainText('database-secret')
+    await recordStep(page, P, 'Structured operation log list', true, '3 operation records')
+  })
+
+  test('Operation logs support search and result filtering', async ({ page }) => {
+    await fillAndRecord(page, P, '.search-box input', 'app_demo', 'Search')
+    await page.keyboard.press('Enter')
+    await expect(page.locator('.operation-row')).toHaveCount(1)
+    await expect(page.locator('.operation-row')).toContainText('创建数据库')
+
+    await page.locator('.search-box input').clear()
+    await page.keyboard.press('Enter')
+    await page.locator('.result-filter button').filter({ hasText: '成功' }).click()
+    await expect(page.locator('.operation-row')).toHaveCount(3)
+  })
+
+  test('Operation logs expose refresh controls without source tabs', async ({ page }) => {
+    await assertElementVisible(page, P, '.auto-refresh input', 'Auto refresh toggle')
+    await assertElementVisible(page, P, 'button[title="刷新"]', 'Refresh button')
+    await assertElementVisible(page, P, 'button[title="清空操作日志"]', 'Clear button')
+  })
 })

@@ -257,14 +257,12 @@ failed -> starting/stopped
 
 ## 13. Git 协作规范
 
-分支：
+本节以 `docs/GITFLOW.md` 为唯一权威来源：
 
-- 主分支：`main`
-- 开发分支：`dev`
-- 前端分支：`feature/frontend-模块名`
-- 后端分支：`feature/backend-模块名`
-- 数据库分支：`feature/database-模块名`
-- 文档分支：`docs/architecture-plan`
+- 生产分支：`main`，仅接收 `release/*` 或 `hotfix/*`。
+- 集成分支：`develop`，功能从这里创建 `feature/*` 或 `bugfix/*` 并通过 PR 回合。
+- 发布分支：`release/x.y.z` 从 `develop` 创建，合入 `main`、打 tag 后必须回灌 `develop`。
+- 热修分支：`hotfix/x.y.z` 从 `main` 创建，发布后必须回灌 `develop`。
 
 提交格式：
 
@@ -283,7 +281,7 @@ failed -> starting/stopped
 4. 勾选对应 Plan。
 5. 每完成一个任务包必须提交一次 Git，不允许多个未验收任务包混在同一次提交中。
 6. 遇到接口、字段、范围冲突，写入 `docs/COMMUNICATION.md`，不得私自扩大实现。
-7. 合并到 `dev` 前必须通过代码审查和测试记录。
+7. 合并到 `develop` 前必须通过代码审查和测试记录。
 8. `main` 只接收可人工验收的稳定版本。
 
 ## 14. 跨端任务包

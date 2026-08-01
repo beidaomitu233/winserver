@@ -83,12 +83,22 @@ test.describe('Dashboard Page', () => {
   })
 
   test('Dashboard one-click start updates service state', async ({ page }) => {
+    const picker = page.locator('summary[aria-label="选择一键启动项"]')
+    await picker.click()
+    const redisOption = page.locator('.suite-picker-item').filter({ hasText: 'Redis' })
+    await redisOption.locator('input[type="checkbox"]').check()
+    await expect(redisOption.locator('input[type="checkbox"]')).toBeChecked()
+    await picker.click()
     await page.locator('button:has-text("一键启动")').first().click()
     await page.waitForTimeout(600)
-    const pillText = await page.locator('.home-state-pill').textContent().catch(() => '')
-    const updated = /5\s*项服务在线/.test(pillText || '')
-    await recordStep(page, P, 'One-click start state', updated, pillText || '')
-    expect(updated).toBeTruthy()
+    const redisCard = page.locator('.panel-app-card').filter({ hasText: 'Redis' })
+    await expect(redisCard.locator('.panel-app-state')).toContainText('运行中')
+
+    await page.reload()
+    await waitForAppReady(page)
+    await page.locator('summary[aria-label="选择一键启动项"]').click()
+    await expect(page.locator('.suite-picker-item').filter({ hasText: 'Redis' }).locator('input')).toBeChecked()
+    await recordStep(page, P, 'One-click start selection persists', true, 'Redis remains selected after reload')
   })
 
   test('Dashboard Redis config supports visual and file modes', async ({ page }) => {
@@ -106,6 +116,23 @@ test.describe('Dashboard Page', () => {
     await recordStep(page, P, 'Redis direct file editor', hasFileEditor && content.includes('port 6379'), content.slice(0, 80))
     expect(hasFileEditor).toBeTruthy()
     expect(content).toContain('port 6379')
+    await closeModal(page)
+  })
+
+  test('MinIO bucket information copies as connection template', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+    const minioCard = page.locator('.panel-app-card').filter({ hasText: 'MinIO' })
+    await minioCard.locator('.panel-app-actions .btn.ghost').click()
+    const modal = await waitForModal(page)
+    const copyButtons = modal.locator('button[title="复制桶信息"]')
+    const copyCount = await copyButtons.count()
+    expect(copyCount).toBeGreaterThan(0)
+    await copyButtons.nth(0).click()
+    const clipboard = await page.evaluate(() => navigator.clipboard.readText())
+    expect(clipboard).toContain('桶名称：demo-public')
+    expect(clipboard).toContain('访问地址：http://127.0.0.1:9000/demo-public')
+    expect(clipboard).toContain('用户名：minioadmin')
+    await recordStep(page, P, 'Copy MinIO bucket template', true, clipboard.replaceAll('\n', ' | '))
     await closeModal(page)
   })
 

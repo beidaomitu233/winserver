@@ -62,14 +62,18 @@ pub fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
         "CREATE TABLE IF NOT EXISTS operation_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             action TEXT NOT NULL,
+            target_type TEXT,
             target_id TEXT,
             success INTEGER NOT NULL,
             error_code TEXT,
             message TEXT,
+            details_json TEXT,
             created_at TEXT NOT NULL
         )",
         [],
     )?;
+    add_column_if_missing(conn, "operation_logs", "target_type", "TEXT")?;
+    add_column_if_missing(conn, "operation_logs", "details_json", "TEXT")?;
 
     // Runtimes table
     conn.execute(
@@ -161,6 +165,18 @@ pub fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_operation_logs_created ON operation_logs(created_at)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_operation_logs_action ON operation_logs(action)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_operation_logs_success ON operation_logs(success)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_operation_logs_target ON operation_logs(target_type, target_id)",
         [],
     )?;
 
@@ -269,6 +285,53 @@ fn migrate_databases_composite_pk(conn: &Connection) -> anyhow::Result<()> {
     conn.execute("DROP TABLE databases", [])?;
     conn.execute("ALTER TABLE databases_v2 RENAME TO databases", [])?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_migrations;
+    use rusqlite::Connection;
+
+    #[test]
+    fn operation_log_migration_preserves_legacy_table_and_adds_audit_fields() {
+        let conn = Connection::open_in_memory().expect("open database");
+        conn.execute(
+            "CREATE TABLE operation_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action TEXT NOT NULL,
+                target_id TEXT,
+                success INTEGER NOT NULL,
+                error_code TEXT,
+                message TEXT,
+                created_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .expect("create legacy table");
+        conn.execute(
+            "INSERT INTO operation_logs (action, target_id, success, message, created_at)
+             VALUES ('service.start', 'nginx', 1, 'legacy entry', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .expect("insert legacy log");
+
+        run_migrations(&conn).expect("run migrations");
+
+        let columns = conn
+            .prepare("PRAGMA table_info(operation_logs)")
+            .expect("prepare columns")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query columns")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect columns");
+        assert!(columns.contains(&"target_type".to_string()));
+        assert!(columns.contains(&"details_json".to_string()));
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM operation_logs", [], |row| row.get(0))
+            .expect("count logs");
+        assert_eq!(count, 1);
+    }
 }
 
 /// Seed default data into the database if it is empty (first run).

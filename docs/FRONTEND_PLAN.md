@@ -81,10 +81,10 @@ frontend/src/
 
 | 页面 | 核心功能 | 主要接口 |
 | --- | --- | --- |
-| 首页 | 服务大卡片、启动/停止/重启、启动全部/停止全部、快捷入口、最近错误 | `state.get`、`service.start`、`service.stop`、`service.restart`、`suite.start`、`suite.stop` |
+| 首页 | 服务大卡片、启动/停止/重启、启动全部/停止全部、快捷入口、最近错误；MinIO 桶权限与连接信息复制 | `state.get`、`service.start`、`service.stop`、`service.restart`、`suite.start`、`suite.stop`、`minio.buckets.list` |
 | 软件 | 软件列表、检测本机、导入、bundled 安装、下载、删除 | `software.detectLocal`、`runtime.import`、`software.installBundled`、`software.downloadInstall`、`software.uninstall` |
 | 网站 | 站点列表、新建、编辑、启用、停用、删除、打开、配置、切 PHP | `site.create`、`site.update`、`site.enable`、`site.disable`、`site.delete`、`site.switchPhp` |
-| 日志 | 来源切换、搜索、刷新、自动刷新、清空、打开目录 | `log.list`、`log.clear`、`open_folder` |
+| 日志 | 结构化操作记录、搜索、结果筛选、自动刷新、清空 | `log.list`、`log.clear` |
 | 设置 | 常规、网络、路径、安全、备份、配置文件 | `settings.get`、`settings.update`、`settings.paths`、`config.get`、`config.save` |
 | 数据库 | MySQL 状态、phpMyAdmin、创建库、改密、导入导出 | `database.create`、`database.export`、`database.import`、`database.backups` |
 | 文件 | 只读目录浏览 | `files.list`、`open_folder` |
@@ -507,18 +507,18 @@ services/api.ts
 
 - [ ] 任务编号：FE-021
   模块：日志页
-  目标：完成多源日志查看、搜索、刷新、清空。
+  目标：完成结构化操作日志查看、搜索、结果筛选、刷新和清空。
   使用者：排障用户和测试人员。
   使用位置：日志页。
-  输入：source、search。
-  输出：日志行列表。
-  实现说明：来源下拉包含 operation/nginx_error/nginx_access/php_error/agent；搜索防抖；自动刷新可开关；清空危险操作二次确认。
+  输入：固定 `source=operation`、search。
+  输出：包含 action、target、success、errorCode、message、details、createdAt 的记录列表。
+  实现说明：只保留操作日志；按成功/失败筛选；展示脱敏后的请求详情；自动刷新可开关；清空危险操作二次确认。
   依赖接口：`log.list`、`log.clear`。
   依赖表：`operation_logs`。
-  状态处理：加载中、空日志、搜索无结果、文件不存在、清空中。
-  异常情况：日志文件无权限、大日志、后端读取失败。
-  验收标准：日志不存在时展示空/错误状态；清空只作用当前来源。
-  测试要求：覆盖来源切换、搜索、清空确认、空状态。
+  状态处理：加载中、空日志、搜索无结果、清空中。
+  异常情况：数据库读取失败、结构化详情缺失。
+  验收标准：关键用户操作有记录；密码/token/配置正文不以明文展示；清空只作用 `operation_logs`。
+  测试要求：覆盖结构化展示、搜索、结果筛选、脱敏、清空确认和空状态。
 
 - [ ] 任务编号：FE-022
   模块：设置页常规/网络/路径

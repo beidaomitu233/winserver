@@ -74,7 +74,8 @@ WinServer 要解决三类问题：
 
 ### 3.7 日志与诊断
 
-- 日志中心展示操作日志、Nginx access/error、PHP error、Agent 日志。
+- 日志中心仅展示结构化操作日志，记录操作、目标、结果、错误码、时间和脱敏后的请求详情。
+- Nginx、PHP 与 Agent 文件日志不再作为日志中心的数据源。
 - 端口检查展示端口是否被占用、PID、进程名、建议动作。
 - 配置编辑必须先备份，再保存，再校验相关服务配置。
 - 诊断结果统一包含错误码、标题、原因、影响对象、建议操作。
@@ -176,7 +177,7 @@ WinServer 使用 Tauri command 调用本地 Rust handler，handler 内部采用 
 | runtime | `runtime.import`, `runtime.list` | 软件页 | 导入与查询运行环境 |
 | 软件 | `software.detectLocal`, `software.install`, `software.downloadInstall`, `software.installBundled`, `software.uninstall` | 软件页 | 检测、安装、删除 runtime |
 | 配置 | `config.get`, `config.save` | 设置/网站/首页 | 读取和保存配置文件 |
-| 日志 | `log.list`, `log.clear` | 日志页 | 读取、搜索、清空日志 |
+| 日志 | `log.list`, `log.clear` | 日志页 | 读取、搜索、筛选、清空结构化操作日志 |
 | 端口 | `port.check` | 首页/设置 | 端口检测 |
 | hosts | `hosts.sync`, `hosts.remove` | 网站闭环 | 只维护 WinServer 管理的域名 |
 | 数据库 | `database.create`, `database.delete`, `database.export`, `database.import`, `database.backups` | 数据库页 | MySQL/PostgreSQL 管理能力 |
@@ -334,4 +335,3 @@ UI 规则：
   依赖文档：`docs/PROJECT_DOCUMENT.md`、`docs/COMMUNICATION.md`
   验收标准：执行模型可以根据闭环描述拆出前端、后端、数据库任务。
   测试要求：审查新增功能是否能映射到至少一个自动测试和一个人工验收步骤。
-

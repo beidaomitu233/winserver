@@ -107,8 +107,8 @@
 | --- | --- | --- | --- |
 | `config.get` | `fileId` | `id`、`label`、`path`、`exists`、`content` | `CONFIG_NOT_FOUND`、`READ_FAILED` |
 | `config.save` | `fileId`、`content` | `state`、`message`、`backupPath?` | `CONFIG_NOT_FOUND`、`WRITE_DENIED`、`CONFIG_INVALID` |
-| `log.list` | `source?`、`search?` | `source`、`path?`、`logs` | `LOG_SOURCE_INVALID` |
-| `log.clear` | `source?` | `message`、`path?` | `WRITE_DENIED` |
+| `log.list` | `source=operation`、`search?` | `source`、结构化 `logs` | `LOG_SOURCE_INVALID` |
+| `log.clear` | `source=operation` | `message` | `WRITE_DENIED` |
 | `port.check` | `port`、`address?`、`protocol?` | `port`、`isOpen`、`pid`、`processName`、`path?` | `PORT_CHECK_FAILED` |
 | `hosts.sync` | `domain` | `message` | `HOSTS_PERMISSION_DENIED`、`DOMAIN_CONFLICT` |
 | `hosts.remove` | `domain` | `message` | `HOSTS_PERMISSION_DENIED` |
@@ -597,16 +597,16 @@ prepare staging
 
 - [ ] 任务编号：BE-020
   模块：日志读取与清空
-  目标：多源日志尾部读取、搜索、清空。
+  目标：结构化操作日志读取、搜索、脱敏和清空。
   接口：`log.list`、`log.clear`。
-  请求参数：`source?`、`search?`。
-  响应字段：`source`、`path?`、`logs`。
-  业务流程：解析 source -> operation 从 DB 读；文件日志按路径尾部读取 -> 搜索过滤 -> 限制 500 行。
-  异常处理：文件不存在返回提示行或空状态；无权限返回错误。
+  请求参数：固定 `source=operation`、`search?`。
+  响应字段：`source`、`logs[{ id, action, targetType, targetId, success, errorCode, message, details, createdAt }]`。
+  业务流程：从 `operation_logs` 按时间倒序读取 -> 对结构化字段搜索过滤 -> 限制 500 条；写入时最多保留 5000 条。
+  异常处理：非 operation 来源返回错误；审计写入失败不得覆盖原业务结果。
   数据表：`operation_logs`。
   依赖前端：`FE-021`。
-  验收标准：10MB+ 日志不卡顿；清空只作用当前来源。
-  测试要求：覆盖大日志、搜索、文件不存在、清空。
+  验收标准：关键修改操作成功和失败均可追踪；详情不包含密码、token 或配置正文；清空只作用操作日志表。
+  测试要求：覆盖旧表迁移、搜索、脱敏、保留上限和清空。
 
 ### BE-PKG-06：设置、数据库、文件
 
