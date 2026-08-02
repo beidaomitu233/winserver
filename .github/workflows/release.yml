@@ -88,4 +88,5 @@ jobs:
         run: |
           & .github/scripts/normalize-updater-manifest.ps1 `
             -Repository "${{ github.repository }}" `
-            -Tag "${{ github.ref_name }}"
+            -Tag "${{ github.ref_name }}" `
+            -Publish
